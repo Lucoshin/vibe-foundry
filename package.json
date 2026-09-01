@@ -1,0 +1,35 @@
+{
+  "name": "vibe-foundry",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Distill reusable assets from code, business flows, product ideas, and culture materials.",
+  "license": "Apache-2.0",
+  "author": "Lucoshin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lucoshin/vibe-foundry.git"
+  },
+  "homepage": "https://github.com/Lucoshin/vibe-foundry#readme",
+  "bugs": {
+    "url": "https://github.com/Lucoshin/vibe-foundry/issues"
+  },
+  "type": "module",
+  "packageManager": "npm@11.6.2",
+  "bin": {
+    "vibe-foundry": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test \"tests/**/*.test.mjs\"",
+    "dev": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.4",
+    "@vue/compiler-dom": "^3.5.39",
+    "@vue/compiler-sfc": "^3.5.39",
+    "better-sqlite3": "12.10.0"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  }
+}

@@ -1,0 +1,47 @@
+name: Feature request
+description: 提议新的能力或公开契约变化
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景
+      description: 描述当前无法完成的具体任务，不要只描述解决方案。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 期望结果
+      description: 说明成功标准和建议纳入的范围。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案
+      description: 说明现有命令、文档或工作流为什么不足。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响区域
+      options:
+        - CLI / distill
+        - Web Asset Browser
+        - MCP / Skill / Plugin
+        - Schema / asset library
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: 契约检查
+      options:
+        - label: 我已说明是否会改变公开字段、命令或资产库结构。
+          required: true
+        - label: 示例中不包含秘密、私人路径或私有业务数据。
+          required: true

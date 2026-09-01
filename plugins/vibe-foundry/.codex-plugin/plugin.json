@@ -1,0 +1,28 @@
+{
+  "name": "vibe-foundry",
+  "version": "0.1.0",
+  "description": "Distill and query reusable assets from local projects.",
+  "author": {
+    "name": "Lucoshin",
+    "url": "https://github.com/Lucoshin"
+  },
+  "homepage": "https://github.com/Lucoshin/vibe-foundry#readme",
+  "repository": "https://github.com/Lucoshin/vibe-foundry",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "VibeFoundry",
+    "shortDescription": "Distill local project assets for reuse.",
+    "longDescription": "VibeFoundry packages a Codex skill and MCP asset query surface for reusable components, services, business flows, product patterns, and metaphor assets.",
+    "developerName": "Lucoshin",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/Lucoshin/vibe-foundry",
+    "capabilities": ["Skills", "MCP"],
+    "defaultPrompt": [
+      "Distill reusable assets from this project.",
+      "Find reusable services before I build this.",
+      "Query VibeFoundry asset rules."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

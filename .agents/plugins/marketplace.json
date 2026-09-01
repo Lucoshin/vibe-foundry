@@ -1,0 +1,20 @@
+{
+  "name": "vibe-foundry",
+  "interface": {
+    "displayName": "VibeFoundry"
+  },
+  "plugins": [
+    {
+      "name": "vibe-foundry",
+      "source": {
+        "source": "local",
+        "path": "./plugins/vibe-foundry"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
