@@ -226,7 +226,7 @@ function borrowThumbnailPreview(asset) {
   const card = [...byId('asset-list').children].find(card => card.dataset.assetId === asset.id);
   const container = card?.querySelector('.component-thumbnail');
   const frame = container?.querySelector('iframe');
-  if (frame) borrowedPreview = {assetId:asset.id, frame, container};
+  if (frame?.contentDocument?.querySelector('[data-vibe-preview-canvas]')) borrowedPreview = {assetId:asset.id, frame, container};
 }
 function mountBorrowedPreview(detail) {
   if (!borrowedPreview) return;

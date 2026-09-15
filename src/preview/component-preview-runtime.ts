@@ -423,7 +423,7 @@ class PreviewErrorBoundary extends React.Component {
 
   render() {
     if (this.state.error) {
-      return <div className="vibe-preview-empty">预览运行失败：{this.state.error.message || String(this.state.error)}</div>;
+      return <div className="vibe-preview-empty">{this.props.preview?.previewScenario?.unresolvedProps?.length ? <><strong>缺少源调用场景数据</strong><p>需要入参：{this.props.preview.previewScenario.unresolvedProps.join("、")}</p><p>请补充源项目中的使用示例后重新炼化。</p></> : "组件未能独立运行"}<details><summary>技术信息</summary>{this.state.error.message || String(this.state.error)}</details></div>;
     }
     return this.props.children;
   }
@@ -497,11 +497,11 @@ function App() {
         )}
         <div ref={canvasRef} className="vibe-preview-canvas" data-vibe-preview-canvas>
           {loadError ? (
-            <div className="vibe-preview-empty">预览加载失败：{loadError}</div>
+            <div className="vibe-preview-empty"><strong>组件运行环境未就绪</strong><p>请检查源项目的编译配置与运行依赖。</p><details><summary>技术信息</summary>{loadError}</details></div>
           ) : ActiveComponent ? (
             <div ref={stageRef} className="vibe-preview-fit-stage">
               <div className="vibe-preview-fit-target">
-                <PreviewErrorBoundary key={activePreview?.id}>
+                <PreviewErrorBoundary key={activePreview?.id} preview={activePreview}>
                   <ActiveComponent />
                 </PreviewErrorBoundary>
               </div>
@@ -812,6 +812,7 @@ function viteConfigFile(options = {}) {
   const isVue27 = options.vueVersion?.startsWith("2.7.");
   const hasUnoCss = options.runtimeContext?.plugins?.includes("unocss");
   const hasUniH5 = options.hasUniH5 === true;
+  const hasTaroH5 = options.runtimeContext?.plugins?.includes("taro-h5");
   const projectRootRelativePath = options.projectRootRelativePath ?? "../..";
   const vuePluginImport = !hasVuePreviews ? "" : isVue26
     ? `const { vue26PreviewPlugin } = await import(${jsString(new URL("./vue26-preview-plugin.js", import.meta.url).href)});
@@ -995,6 +996,8 @@ export default {
   base: previewBase,
   resolve: {
     alias: [
+      ${hasTaroH5 ? `{ find: /^@tarojs\\/components$/, replacement: createRequire(resolve(projectRoot, "package.json")).resolve("@tarojs/components/lib/react/index.js") },
+      { find: /^@tarojs\\/taro$/, replacement: createRequire(resolve(projectRoot, "package.json")).resolve("@tarojs/plugin-platform-h5/dist/runtime/apis/index.js") },` : ""}
       { find: /^~/, replacement: resolve(projectRoot, "node_modules") + "/" },
       { find: /^@\\//, replacement: resolve(projectRoot, "src") + "/" },
       ...(useUniH5 ? [{ find: "vue", replacement: resolve(projectRoot, "node_modules/@dcloudio/uni-h5-vue") }] : ${hasVuePreviews ? '[{ find: "vue", replacement: dirname(createRequire(resolve(projectRoot, "package.json")).resolve("vue/package.json")) }]' : "[]"}),
@@ -1045,6 +1048,7 @@ ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
     },
   },
   define: {
+    ${hasTaroH5 ? '"global": "globalThis", "DEPRECATED_ADAPTER_COMPONENT": "false", "process.env.TARO_ENV": JSON.stringify("h5"), "process.env.FRAMEWORK": JSON.stringify("react"), "process.env.SUPPORT_TARO_POLYFILL": JSON.stringify("disabled"), "process.env.SUPPORT_DINGTALK_NAVIGATE": JSON.stringify("disabled"),' : ""}
     "process.env": {},
     ...(useUniH5 ? {
       "__VUE_OPTIONS_API__": true,
@@ -1450,6 +1454,7 @@ export async function discoverPreviewRuntimeContext(projectRoot, options = {}) {
   )].map((match) => match[1]).filter((name, index, names) => names.indexOf(name) === index).sort();
   const globalStyles = await discoverProjectStyleImports(projectRoot, readSource);
   const plugins = "unocss" in dependencies ? ["unocss"] : [];
+  if ("@tarojs/taro" in dependencies && "@tarojs/components" in dependencies) plugins.push("taro-h5");
   const runtimeEvidence = runtimeSources.filter((item) =>
     /\b(?:BrowserRouter|RouterProvider|createBrowserRouter|useRoutes|createPinia|createRouter|configureStore|createStore|createI18n|I18nextProvider|initReactI18next)\b|react-redux/.test(item.source),
   );

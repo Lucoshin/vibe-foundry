@@ -28,6 +28,8 @@ last_updated: 2026-09-08
 
 ## 3. 技术与执行
 
+- [Taro 预览与失联恢复](plans/2026-09-15-taro-preview-recovery.md)：官方 H5 入口、失联实例重试与真实数据限制。
+
 - [预览左右切换](plans/2026-09-15-preview-navigation.md)：按筛选顺序连续查看，首尾禁用。
 
 - [放大预览复用实例](plans/2026-09-15-preview-instance-reuse.md)：复用已加载 iframe，返回列表保留状态。

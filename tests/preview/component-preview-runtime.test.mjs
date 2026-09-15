@@ -1506,3 +1506,13 @@ const props = defineProps<{ clickable?: boolean }>();
     }
   });
 });
+
+it('selects official Taro H5 component and API adapters without affecting ordinary React',()=>{
+ const registry=buildComponentPreviewRegistry([{name:'Card',filePath:'src/Card.tsx',exportMode:'default'}],{projectRoot:process.cwd()});
+ const taro=buildPreviewRuntimeFiles(registry,{runtimeContext:{plugins:['taro-h5'],providers:[],globalStyles:[]}});
+ assert.ok(taro['vite.config.js'].includes('@tarojs/components/lib/react/index.js'));
+ assert.ok(taro['vite.config.js'].includes('@tarojs/plugin-platform-h5/dist/runtime/apis/index.js'));
+ assert.ok(taro['vite.config.js'].includes('DEPRECATED_ADAPTER_COMPONENT'));
+ const ordinary=buildPreviewRuntimeFiles(registry,{runtimeContext:{plugins:[],providers:[],globalStyles:[]}});
+ assert.ok(!ordinary['vite.config.js'].includes('@tarojs/components/lib/react/index.js'));
+});

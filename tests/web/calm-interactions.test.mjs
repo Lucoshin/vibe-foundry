@@ -69,6 +69,7 @@ function element(tagName = 'div', markup = '') {
       return `<${this.tagName}${attributes}>${this.innerHTML}</${this.tagName}>`;
     } },
   });
+  if (tagName === 'iframe') node.contentDocument = {querySelector: () => ({})};
   return node;
 }
 
@@ -275,4 +276,12 @@ test('preview navigation follows filtered order, skips blocked assets and stops 
  assert.equal(vm.runInContext('previewNeighbors(state.selected).next',context),undefined);
  assert.equal(get('asset-list').children[0].querySelector('iframe'),firstFrame);
  assert.match(get('asset-detail').innerHTML,/下一个组件[^>]*disabled/);
+});
+
+test('a disconnected thumbnail error document is not reused in the workbench',()=>{
+ const {context,get}=harness();vm.runInContext('renderList()',context);
+ const frame=get('asset-list').querySelector('iframe');frame.contentDocument=null;
+ vm.runInContext("showComponentPreview('one')",context);
+ assert.notEqual(get('asset-detail').querySelector('iframe'),frame);
+ assert.ok(get('asset-detail').querySelector('iframe'));
 });
