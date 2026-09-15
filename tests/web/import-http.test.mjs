@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -27,7 +27,7 @@ test('local import HTTP requires the page token and rejects foreign origins befo
   assert.equal(foreignHostStatus, 403);
   const listing = await browse({ headers });
   assert.equal(listing.status, 200);
-  assert.equal((await listing.json()).path.toLowerCase(), root.toLowerCase());
+  assert.equal((await listing.json()).path, await realpath(root));
   assert.equal(await fetch(url + '/api/import/status', { headers }).then(response => response.json()), null);
   assert.equal((await fetch(url + '/api/import/start', { method: 'POST', headers, body: '{bad' })).status, 400);
   assert.equal((await fetch(url + '/api/import/result/assets', { headers })).status, 400);

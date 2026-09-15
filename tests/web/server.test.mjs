@@ -129,7 +129,8 @@ function createMockResponse() {
 
 async function waitForPreviewResponse(handler, url, pattern) {
   let response = createMockResponse();
-  for (let attempt = 0; attempt < 25; attempt += 1) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     response = createMockResponse();
     await handler({ url, method: "GET" }, response);
     if (pattern.test(response.body)) {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -27,7 +27,7 @@ test('local picker lists real directories and supported documents with original 
   const root = await fixture(t);
   const service = createLocalImport({ libraryRoot: join(root, 'library'), initialDirectory: root });
   const listing = await service.browse(root);
-  assert.equal(listing.path, await import('node:fs/promises').then(fs => fs.realpath(root)));
+  assert.equal(listing.path, await realpath(root));
   assert.deepEqual(listing.entries.map(entry => entry.name), ['项目', '资料.md']);
   assert.equal(listing.entries[1].path, join(listing.path, '资料.md'));
   await assert.rejects(service.browse(join(root, 'absent')));
@@ -44,7 +44,7 @@ test('document import runs real analysis, preserves source and delivers fixed re
   assert.equal(result.state, 'succeeded', result.message);
   assert.equal(result.kind, 'document');
   assert.match(await service.result('report'), /Chapters/);
-  assert.equal(JSON.parse(await service.result('assets')).sourcePath, path);
+  assert.equal(JSON.parse(await service.result('assets')).sourcePath, await realpath(path));
   await assert.rejects(service.result('../../secret'), /结果/);
   assert.equal(await readFile(path, 'utf8'), before);
 });
