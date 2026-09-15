@@ -12,7 +12,11 @@ describe("web asset browser runbook", () => {
     assert.match(runbook, /VIBE_FOUNDRY_LIBRARY_ROOT/);
     assert.match(runbook, /<user-home>\/\.vibe-foundry\/library/);
     assert.match(runbook, /GET \/api\/assets/);
-    assert.match(runbook, /苹果风/);
+    assert.match(runbook, /暖白与中性灰/);
+    assert.match(runbook, /悬停只强调边框/);
+    assert.match(runbook, /前 6 个可构建组件/);
+    assert.match(runbook, /最多同时构建 2 个/);
+    assert.match(runbook, /返回时保留列表位置/);
     assert.match(runbook, /Pencil MCP/);
     assert.match(runbook, /VibeFoundry\.pen/);
     assert.match(runbook, /Overview、Asset Library、Reports 和 Missing Package/);

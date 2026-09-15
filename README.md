@@ -19,7 +19,7 @@ npm ci
 npm run build
 ```
 
-用公开 fixture 完成第一次炼化并启动本地只读浏览器：
+用公开 fixture 完成第一次炼化并启动本地资产浏览器：
 
 ```bash
 node dist/cli.js distill examples/fixture-project
@@ -36,6 +36,16 @@ node dist/cli.js distill-book <book.pdf>
 node dist/cli.js web --port 4317
 npm test
 ```
+
+## 最新更新
+
+- Web 内选择本地项目或文件导入炼化，空资产库也可直接使用。
+- 支持 Vue 2.6、Vue 2.7、Vue 3 与 React 组件预览，沿用源项目依赖。
+- 组件缩略图按需加载；放大复用已加载实例，左右箭头按筛选顺序切换。
+- 预览明确区分源调用场景、缺少上下文和构建失败，不伪造业务数据。
+- 组件效果描述提示词与带来源依据的书籍知识资产流程。
+
+具体范围与验证记录见 [文档索引](docs/README.md)。
 
 ## 集中资产库
 
@@ -62,9 +72,12 @@ package script 可以执行任意代码或任意命令；不要对来源不明�
 ## 能力入口
 
 - `distill`：提炼前端组件、后端服务、业务入口、tokens、页面/业务模式和产品设计资产。
+- 组件效果提示词：把组件效果转成产品可使用的专业中文需求，按布局、视觉、动效、交互详细描述；随 `distill` 生成，在 Web 组件详情复制，或用 MCP `get_component_prompt({filePath})` 查询。分析依据和待核对项单独展示，复制正文不携带源码。
 - `distill-book`：从 PDF、TXT 或 Markdown 提取章节、概念簇和关系资产。
-- Web Asset Browser：本地只读查看集中资产库。
+- Web Asset Browser：浏览集中资产库，并通过“导入炼化”选择本地项目文件夹或 PDF/TXT/Markdown 文档；用户主动启动后将产物写入集中库。
 - MCP、Skill 与 Plugin：为 agent 提供只读资产查询和工作流指引。
+
+源码索引按内容缓存解析结果，重复炼化会显示解析/复用数量；普通炼化不逐组件启动浏览器或调用模型。当前还原依据是静态源码，实机视觉校准仍在后续计划中。
 
 ## 文档与社区
 
@@ -77,6 +90,10 @@ package script 可以执行任意代码或任意命令；不要对来源不明�
 - [开源发布检查清单](docs/reports/open-source-release-checklist.md)
 
 普通缺陷和功能建议请使用 GitHub Issues。安全漏洞请使用 [Private Vulnerability Reporting](https://github.com/Lucoshin/vibe-foundry/security/advisories/new)，不要先公开利用细节。
+
+## 书籍世界观、角色卡与关系网络
+
+`distill-book <book-path> --prepare <new-work-dir>` 准备分块任务；让当前 AI 阅读 `book-task.md` 并生成分析，再用 `distill-book <book-path> --analysis <analysis-json>` 校验并输出五类知识资产及离线关系图。当前语义阅读由宿主 AI 执行，未接独立模型 API；来源核验不等于结论判真。完整步骤见[书籍炼化手册](docs/runbooks/distill-book-knowledge.md)。
 
 ## 许可证
 

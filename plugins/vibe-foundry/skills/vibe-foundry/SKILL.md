@@ -33,12 +33,15 @@ When an MCP client is available, prefer VibeFoundry MCP tools for read-only look
 
 - `list_assets`
 - `get_component`
+- `get_component_prompt` — pass the component's exact project-relative `filePath`; the result contains a Chinese design brief describing layout, visual appearance, motion, and interaction.
 - `get_service`
 - `search_tokens`
 - `search_business_patterns`
 - `search_concept_assets`
 - `get_agent_rules`
 - `validate_asset_usage`
+
+For component effects, return the generated `prompt` as the copyable design brief. Keep `sourceFiles` and `unresolved` separate as analysis references and items to verify; do not append source code to the brief. The current record version is 0.2.0; older source-bundle prompts require redistillation. Run distillation when authorized by the user's task; do not invent visual effects when evidence is missing. Browser mount evidence does not establish visual fidelity.
 
 ## Output Guidance
 

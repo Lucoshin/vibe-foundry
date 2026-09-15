@@ -40,7 +40,6 @@ try {
   };
 
   run("npm", ["test"], environment);
-  run("npm", ["run", "build"], environment);
   run("node", ["dist/cli.js", "distill", fixtureRoot], environment);
 
   const { assetPackageDirectoryFor } = await import("../dist/library/asset-library.js");
@@ -69,6 +68,16 @@ try {
     conceptSearch.structuredContent.metaphorPacks.length > 0,
     "MCP search_concept_assets should find metaphor packs",
   );
+
+  const componentPath = "src/components/Button.tsx";
+  const { readComponentPrompt } = await import("../dist/library/component-prompts.js");
+  const componentPrompt = await callVibeFoundryTool(fixtureRoot, "get_component_prompt", { filePath: componentPath });
+  const storedPrompt = await readComponentPrompt(assetDir, componentPath);
+  assert(!componentPrompt.isError, "MCP get_component_prompt should return the fixture component prompt");
+  assert(JSON.stringify(componentPrompt.structuredContent) === JSON.stringify(storedPrompt), "MCP component prompt should match its persisted record exactly");
+  assert(storedPrompt.schemaVersion === "0.2.0", "component prompt should use the effect-description contract");
+  assert(["布局", "视觉", "动效", "交互", "Continue"].every((text) => storedPrompt.prompt.includes(text)), "component prompt should describe the four design dimensions and actual visible label");
+  assert(!/export function|import |```|<button/.test(storedPrompt.prompt), "component prompt must not include source code");
 
   const plugin = await readJson("plugins/vibe-foundry/.codex-plugin/plugin.json");
   assert(plugin.name === "vibe-foundry", "plugin manifest name should be vibe-foundry");

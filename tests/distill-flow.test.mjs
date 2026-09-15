@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -93,6 +93,29 @@ describe("distillProject", () => {
         rm(root, { recursive: true, force: true }),
       ),
     );
+  });
+
+  it("distills Vue components with mutually exclusive platform declarations and explicit analysis limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-platform-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    fixtureRoots.push(root, libraryRoot);
+    await createMinimalFrontendProject(root, "platform-fixture");
+    await writeFile(join(root, "src/components/Card.vue"), `<template><button>确认</button></template>
+      <script>export default { methods: { open() {
+        // #ifdef APP-PLUS
+        const initDelay = 900;
+        // #endif
+        // #ifndef APP-PLUS
+        const initDelay = 420;
+        // #endif
+      } } };</script>`);
+    const result = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    const manifest = JSON.parse(await readFile(join(result.outputDir, "asset-manifest.json"), "utf8"));
+    assert.equal(manifest.assetCounts.components, 1);
+    const prompts = await readdir(join(result.outputDir, "component-prompts"));
+    const texts = await Promise.all(prompts.filter((file) => file.endsWith(".json")).map((file) => readFile(join(result.outputDir, "component-prompts", file), "utf8")));
+    assert.ok(texts.some((text) => text.includes("脚本解析")));
+    await assert.rejects(() => access(join(root, ".vibe-foundry")), { code: "ENOENT" });
   });
 
   it("writes the minimal asset package files for a project", async () => {
@@ -212,6 +235,174 @@ describe("distillProject", () => {
       () => writeAssetPackage(root, {}),
       /writeAssetPackage requires options\.outputDir/,
     );
+  });
+
+  it("reuses unchanged source parsing and updates component prompts when source or styles change", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-prompt-library-"));
+    fixtureRoots.push(libraryRoot);
+    const componentPath = join(root, "src", "components", "Button.tsx");
+    const componentSource = 'import "./Button.css"; export function Button() { return <button className="button">保存</button>; }\n';
+    await writeFile(componentPath, componentSource);
+    await writeFile(join(root, "src", "components", "Button.css"), ".button { color: #123456; padding: 12px; }\n");
+    const cold = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    assert.deepEqual(cold.analysis, { files: 3, parsed: 3, reused: 0 });
+    const [promptName] = await readdir(join(cold.outputDir, "component-prompts"));
+    const promptPath = join(cold.outputDir, "component-prompts", promptName);
+    const coldPrompt = JSON.parse(await readFile(promptPath, "utf8"));
+    assert.equal(coldPrompt.filePath, "src/components/Button.tsx");
+    assert.equal(coldPrompt.schemaVersion, "0.2.0");
+    assert.match(coldPrompt.prompt, /布局/);
+    assert.match(coldPrompt.prompt, /视觉/);
+    assert.match(coldPrompt.prompt, /动效/);
+    assert.match(coldPrompt.prompt, /交互/);
+    assert.match(coldPrompt.prompt, /保存/);
+    assert.doesNotMatch(coldPrompt.prompt, /export function|import |```|<button/);
+    assert.match(coldPrompt.prompt, /#123456/);
+    const coldPreview = JSON.parse(await readFile(join(cold.outputDir, "component-previews.json"), "utf8"));
+
+    const warm = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    assert.deepEqual(warm.analysis, { files: 3, parsed: 0, reused: 3 });
+    assert.deepEqual(JSON.parse(await readFile(promptPath, "utf8")), coldPrompt);
+    await writeFile(join(root, "src", "components", "Button.css"), ".button { color: #654321; padding: 12px; }\n");
+    const restyled = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    assert.deepEqual(restyled.analysis, { files: 3, parsed: 0, reused: 3 });
+    const styledPrompt = JSON.parse(await readFile(promptPath, "utf8"));
+    assert.notEqual(styledPrompt.sourceDigest, coldPrompt.sourceDigest);
+    assert.match(styledPrompt.prompt, /#654321/);
+    const styledPreview = JSON.parse(await readFile(join(cold.outputDir, "component-previews.json"), "utf8"));
+    assert.notEqual(styledPreview.previews[0].actionDigest, coldPreview.previews[0].actionDigest);
+
+    await writeFile(componentPath, componentSource.replace("保存", "提交"));
+    const changed = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    assert.deepEqual(changed.analysis, { files: 3, parsed: 1, reused: 2 });
+    assert.match(JSON.parse(await readFile(promptPath, "utf8")).prompt, /提交/);
+  });
+
+  it("invalidates preview actions for nested styles and binary material bytes", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-material-library-"));
+    fixtureRoots.push(libraryRoot);
+    await writeFile(join(root, "src/components/Button.tsx"), 'import "./Button.css"; export function Button() { return <button>保存</button>; }\n');
+    await writeFile(join(root, "src/components/Button.css"), '@import "./theme.css";\n');
+    await writeFile(join(root, "src/components/theme.css"), 'button { color: red; background-image: url("./background.png"); }\n');
+    await writeFile(join(root, "src/components/background.png"), Buffer.from([0x80]));
+    async function capture() {
+      const result = await distillProject(root, { assetLibraryRoot: libraryRoot });
+      const [filename] = await readdir(join(result.outputDir, "component-prompts"));
+      return {
+        analysis: result.analysis,
+        prompt: JSON.parse(await readFile(join(result.outputDir, "component-prompts", filename), "utf8")).sourceDigest,
+        action: JSON.parse(await readFile(join(result.outputDir, "component-previews.json"), "utf8")).previews[0].actionDigest,
+      };
+    }
+    const cold = await capture();
+    const warm = await capture();
+    assert.equal(warm.prompt, cold.prompt);
+    assert.equal(warm.action, cold.action);
+    await writeFile(join(root, "src/components/theme.css"), 'button { color: blue; background-image: url("./background.png"); }\n');
+    const styled = await capture();
+    assert.deepEqual(styled.analysis, { files: 3, parsed: 0, reused: 3 });
+    assert.notEqual(styled.prompt, warm.prompt);
+    assert.notEqual(styled.action, warm.action);
+    // Both byte sequences decode to the same UTF-8 replacement character.
+    await writeFile(join(root, "src/components/background.png"), Buffer.from([0x81]));
+    const replaced = await capture();
+    assert.notEqual(replaced.prompt, styled.prompt);
+    assert.notEqual(replaced.action, styled.action);
+  });
+
+  it("writes separate Unicode metaphor files matching the combined catalog", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    fixtureRoots.push(libraryRoot);
+    await writeFile(join(root, "docs", "metaphors", "山海经.md"), "精卫填海，夸父逐日。\n");
+    await writeFile(join(root, "docs", "metaphors", "道德经.md"), "道法自然。\n");
+
+    const { outputDir } = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    const catalog = JSON.parse(await readFile(join(outputDir, "concept-assets.json"), "utf8"));
+
+    for (const source of ["山海经", "道德经"]) {
+      const pack = JSON.parse(await readFile(join(outputDir, "metaphor-packs", `${source}.json`), "utf8"));
+      assert.deepEqual(pack, catalog.metaphorPacks.find((item) => item.source === source));
+      assert.deepEqual(pack.coreMetaphors, []);
+    }
+  });
+
+  it("rejects colliding metaphor filenames before changing any asset package files", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    fixtureRoots.push(libraryRoot);
+    const { outputDir } = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    const manifestBefore = await readFile(join(outputDir, "asset-manifest.json"), "utf8");
+    const catalogBefore = await readFile(join(outputDir, "concept-assets.json"), "utf8");
+    const indexBefore = await readFile(join(libraryRoot, "index.json"), "utf8");
+    await writeFile(join(root, "docs", "metaphors", "memory palace.md"), "A forge transforms materials.\n");
+
+    await assert.rejects(
+      () => distillProject(root, { assetLibraryRoot: libraryRoot }),
+      /Metaphor filename collision.*memory-palace\.json.*memory palace.*memory-palace/,
+    );
+    assert.equal(await readFile(join(outputDir, "asset-manifest.json"), "utf8"), manifestBefore);
+    assert.equal(await readFile(join(outputDir, "concept-assets.json"), "utf8"), catalogBefore);
+    assert.equal(await readFile(join(libraryRoot, "index.json"), "utf8"), indexBefore);
+    assert.deepEqual(await readdir(join(outputDir, "metaphor-packs")), ["memory-palace.json"]);
+  });
+
+  it("rejects duplicate source names before creating a new asset package", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    fixtureRoots.push(libraryRoot);
+    await mkdir(join(root, "docs", "metaphors", "nested"));
+    await writeFile(join(root, "docs", "metaphors", "nested", "memory-palace.md"), "A forge transforms materials.\n");
+
+    await assert.rejects(
+      () => distillProject(root, { assetLibraryRoot: libraryRoot }),
+      /Metaphor filename collision.*memory-palace\.json/,
+    );
+    assert.deepEqual(await readdir(libraryRoot), []);
+  });
+
+  it("removes obsolete generated metaphor JSON after redistillation without touching other files", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    fixtureRoots.push(libraryRoot);
+    const { outputDir } = await distillProject(root, { assetLibraryRoot: libraryRoot });
+    const packsDir = join(outputDir, "metaphor-packs");
+    await writeFile(join(packsDir, "metaphor-pack.json"), "obsolete Chinese filename");
+    await writeFile(join(packsDir, "README.md"), "preserved note");
+    await mkdir(join(packsDir, "nested"));
+    await writeFile(join(packsDir, "nested", "history.json"), "preserved nested file");
+    await writeFile(join(outputDir, "unrelated.json"), "preserved sibling");
+    await rm(join(root, "docs", "metaphors", "memory-palace.md"));
+    await writeFile(join(root, "docs", "metaphors", "山海经.md"), "精卫填海，夸父逐日。\n");
+
+    await distillProject(root, { assetLibraryRoot: libraryRoot });
+
+    assert.deepEqual((await readdir(packsDir)).sort(), ["README.md", "nested", "山海经.json"]);
+    assert.equal(await readFile(join(packsDir, "README.md"), "utf8"), "preserved note");
+    assert.equal(await readFile(join(packsDir, "nested", "history.json"), "utf8"), "preserved nested file");
+    assert.equal(await readFile(join(outputDir, "unrelated.json"), "utf8"), "preserved sibling");
+    assert.equal(await readFile(join(root, "docs", "metaphors", "山海经.md"), "utf8"), "精卫填海，夸父逐日。\n");
+  });
+
+  it("rejects a metaphor output directory redirected outside its asset package", async () => {
+    const root = await createFixtureProject();
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const externalRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-external-"));
+    fixtureRoots.push(libraryRoot, externalRoot);
+    const outputDir = assetPackageDirectoryFor(libraryRoot, root);
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(join(externalRoot, "unrelated.json"), "external data");
+    await symlink(externalRoot, join(outputDir, "metaphor-packs"), process.platform === "win32" ? "junction" : "dir");
+
+    await assert.rejects(
+      () => distillProject(root, { assetLibraryRoot: libraryRoot }),
+      /Metaphor output directory must stay within its asset package/,
+    );
+    assert.deepEqual(await readdir(outputDir), ["metaphor-packs"]);
+    assert.deepEqual(await readdir(externalRoot), ["unrelated.json"]);
+    assert.equal(await readFile(join(externalRoot, "unrelated.json"), "utf8"), "external data");
   });
 
   it("includes Vue page files in structural page analysis", async () => {

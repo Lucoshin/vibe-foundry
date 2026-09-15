@@ -5,6 +5,7 @@ import { basename, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { resolveAssetLibraryRoot } from "../library/asset-library.js";
+import { assertBookOutputTargets } from "../library/book-output.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,7 +22,10 @@ const conceptDefinitions = [
 ];
 
 function chapterHeading(line) {
-  const text = line.replace(/\f/g, "").trim();
+  const rawText = line.replace(/\f/g, "").trim();
+  const text = /^#{1,6}[ \t]+/.test(rawText)
+    ? rawText.replace(/^#{1,6}[ \t]+/, "").replace(/[ \t]+#+[ \t]*$/, "")
+    : rawText;
   if (/[·.…]{3,}.*\d+\s*$/.test(text) || (/[：:]/.test(text) && text.length > 32)) {
     return "";
   }
@@ -57,7 +61,7 @@ export function analyzeBookText(text, metadata = {}) {
         sources.push({ line: index + 1, chapterId: chapters.findLast((chapter) => chapter.startLine <= index + 1)?.id ?? "front-matter" });
       }
     });
-    return sources.length > 0 ? [{ ...definition, mentions: sources.length, sources: sources.slice(0, 24) }] : [];
+    return sources.length > 0 ? [{ ...definition, mentions: sources.length, sources }] : [];
   });
   const relations = [];
   for (let left = 0; left < concepts.length; left += 1) {
@@ -75,13 +79,13 @@ export function analyzeBookText(text, metadata = {}) {
     author: metadata.author ?? "",
     sourcePath: metadata.sourcePath ?? "",
     chapters,
-    concepts,
+    concepts: concepts.map((concept) => ({ ...concept, sources: concept.sources.slice(0, 24) })),
     relations,
     copyrightNotes: "只保存章节定位、概念统计和关系；不保存书籍全文、长段原文或插图。",
   };
 }
 
-async function extractBookText(bookPath) {
+export async function extractBookText(bookPath) {
   const extension = extname(bookPath).toLowerCase();
   if ([".txt", ".md", ".markdown"].includes(extension)) {
     return readFile(bookPath, "utf8");
@@ -101,16 +105,34 @@ function reportFor(asset) {
   return `# ${asset.title}\n\n- Chapters: ${asset.chapters.length}\n- Concepts: ${asset.concepts.length}\n- Relations: ${asset.relations.length}\n\n## Concepts\n\n${asset.concepts.map((concept) => `- ${concept.name}: ${concept.mentions} mentions`).join("\n")}\n\n## Copyright\n\n${asset.copyrightNotes}\n`;
 }
 
-export async function distillBook(bookPath, options = {}) {
+export function bookTitleFor(bookPath) {
+  return basename(bookPath, extname(bookPath));
+}
+
+export function bookOutputDirectoryFor(bookPath, options = {}) {
   const resolvedPath = resolve(bookPath);
-  const text = await extractBookText(resolvedPath);
-  const title = basename(resolvedPath, extname(resolvedPath)).replace(/\s*\([^)]*\).*$/, "");
-  const asset = analyzeBookText(text, { title, sourcePath: resolvedPath });
+  const title = bookTitleFor(resolvedPath);
   const id = `${title.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "book"}-${createHash("sha256").update(resolvedPath).digest("hex").slice(0, 10)}`;
-  const outputDir = resolve(
+  return resolve(
     options.outputDir
       ?? join(resolveAssetLibraryRoot(options.assetLibraryRoot), "books", id),
   );
+}
+
+export async function distillBook(bookPath, options = {}) {
+  const resolvedPath = resolve(bookPath);
+  const text = await extractBookText(resolvedPath);
+  const asset = analyzeBookText(text, { title: bookTitleFor(resolvedPath), sourcePath: resolvedPath });
+  const outputDir = bookOutputDirectoryFor(resolvedPath, options);
+  await assertBookOutputTargets(outputDir, ["book-assets.json", "book-report.md"], [resolvedPath]);
+  try {
+    const previous = JSON.parse(await readFile(join(outputDir, "book-assets.json"), "utf8"));
+    if (previous.kind === "book-knowledge") {
+      throw new Error("此书已有语义知识资产，不能用词表统计覆盖；请使用 --analysis 更新，或为基础统计指定独立 outputDir。");
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   await mkdir(outputDir, { recursive: true });
   await writeFile(join(outputDir, "book-assets.json"), `${JSON.stringify(asset, null, 2)}\n`);
   await writeFile(join(outputDir, "book-report.md"), reportFor(asset));

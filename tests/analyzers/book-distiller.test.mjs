@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, link, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -65,6 +65,49 @@ describe("analyzeBookText", () => {
     assert.equal(result.chapters.length, 2);
   });
 
+  it("recognizes Markdown ATX chapters without changing source line numbers", () => {
+    const result = analyzeBookText([
+      "# 测试书",
+      "",
+      "# 第一章 形式系统",
+      "形式系统包含符号。",
+      "",
+      "## 第二章 递归 ##",
+      "递归形成嵌套结构。",
+      "###### Chapter 3 Meaning ###",
+      "意义需要解释器。",
+    ].join("\n"));
+
+    assert.deepEqual(result.chapters, [
+      { id: "chapter-1", title: "第一章 形式系统", startLine: 3, endLine: 5 },
+      { id: "chapter-2", title: "第二章 递归", startLine: 6, endLine: 7 },
+      { id: "chapter-3", title: "Chapter 3 Meaning", startLine: 8, endLine: 9 },
+    ]);
+    assert.deepEqual(result.concepts.find((concept) => concept.id === "meaning").sources, [
+      { line: 9, chapterId: "chapter-3" },
+    ]);
+  });
+
+  it("calculates later chapter relations from all mentions while limiting exported sources", () => {
+    const result = analyzeBookText([
+      "第一章 起始篇",
+      ...Array(30).fill("递归产生嵌套结构。"),
+      "第二章 中间篇",
+      ...Array(30).fill("自指指向自身。"),
+      "第三章 综合篇",
+      "递归与自指出现在同一章节。",
+    ].join("\n"));
+
+    assert.deepEqual(result.relations, [
+      { concepts: ["recursion", "self-reference"], sharedChapters: ["chapter-3"] },
+    ]);
+    for (const concept of result.concepts) {
+      assert.equal(concept.mentions, 31);
+      assert.equal(concept.sources.length, 24);
+      assert.ok(concept.sources.every((source) => source.chapterId !== "chapter-3"));
+    }
+  });
+
   it("writes books below the shared environment library root", async () => {
     const source = await readFile("src/analyzers/book-distiller.ts", "utf8");
     assert.doesNotMatch(source, /D:\\\\VibeFoundry/);
@@ -98,5 +141,52 @@ describe("analyzeBookText", () => {
     const result = await distillBook(bookPath, { outputDir });
 
     assert.equal(result.outputDir, resolve(outputDir));
+  });
+
+  it("does not downgrade knowledge assets and leave stale semantic cards behind", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-book-mode-"));
+    roots.push(root);
+    const bookPath = join(root, "book.md");
+    await writeFile(bookPath, "第一章 形式系统\n形式系统。\n");
+    const previous = JSON.stringify({ schemaVersion: "0.2.0", kind: "book-knowledge" });
+    await writeFile(join(root, "book-assets.json"), previous);
+    await writeFile(join(root, "characters.md"), "既有人物卡");
+    await assert.rejects(() => distillBook(bookPath, { outputDir: root }), /知识资产|语义/);
+    assert.equal(await readFile(join(root, "book-assets.json"), "utf8"), previous);
+    assert.equal(await readFile(join(root, "characters.md"), "utf8"), "既有人物卡");
+  });
+
+  it("rejects a source book that would be overwritten by the legacy report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-book-source-collision-")); roots.push(root);
+    const bookPath = join(root, "book-report.md"); const text = "第一章 形式系统\n形式系统包含符号。\n";
+    await writeFile(bookPath, text);
+    await assert.rejects(() => distillBook(bookPath, { outputDir: root }), /输入|源文件/i);
+    assert.equal(await readFile(bookPath, "utf8"), text);
+    assert.deepEqual(await readdir(root), ["book-report.md"]);
+  });
+
+  it("checks both legacy output files for source hard links before writing", async () => {
+    for (const outputName of ["book-assets.json", "book-report.md"]) {
+      const root = await mkdtemp(join(tmpdir(), "vibe-book-source-hardlink-")); roots.push(root);
+      const bookPath = join(root, "book.md"); const text = "第一章 形式系统\n形式系统包含符号。\n";
+      await writeFile(bookPath, text);
+      const outputDir = join(root, "result"); await mkdir(outputDir);
+      await link(bookPath, join(outputDir, outputName));
+      const otherName = outputName === "book-assets.json" ? "book-report.md" : "book-assets.json";
+      const previous = outputName === "book-assets.json" ? "先前报告" : JSON.stringify({ schemaVersion: "0.1.0" });
+      await writeFile(join(outputDir, otherName), previous);
+      await assert.rejects(() => distillBook(bookPath, { outputDir }), /输入|源文件|hard.?link|硬链接/i);
+      assert.equal(await readFile(bookPath, "utf8"), text);
+      assert.equal(await readFile(join(outputDir, otherName), "utf8"), previous);
+    }
+  });
+
+  it("rejects linked legacy output directories without touching their targets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-book-output-link-")); roots.push(root);
+    const bookPath = join(root, "book.md"); await writeFile(bookPath, "第一章 形式系统\n形式系统。\n");
+    const outside = join(root, "outside"); await mkdir(outside);
+    const outputDir = join(root, "linked-output"); await symlink(outside, outputDir, process.platform === "win32" ? "junction" : "dir");
+    await assert.rejects(() => distillBook(bookPath, { outputDir }), /链接|link/i);
+    assert.deepEqual(await readdir(outside), []);
   });
 });

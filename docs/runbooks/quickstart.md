@@ -3,7 +3,7 @@ project: VibeFoundry
 category: runbook
 source_path: docs/runbooks/quickstart.md
 status: active
-last_updated: 2026-09-01
+last_updated: 2026-09-08
 ---
 
 # VibeFoundry Quickstart
@@ -35,6 +35,7 @@ node dist/cli.js distill examples/fixture-project
 
 - `asset-manifest.json`
 - `component-catalog.json`
+- `component-prompts/`：组件效果提示词；源码索引另在 `analysis-cache/` 复用解析结果。
 - `service-catalog.json`
 - `tokens.json`
 - `concept-assets.json`
@@ -52,6 +53,7 @@ node --input-type=module -e "import { callVibeFoundryTool } from './dist/mcp/ser
 
 - `list_assets`
 - `get_component`
+- `get_component_prompt`：传 `filePath: "src/components/Button.tsx"`，取结果中的 `prompt` 交给其他 AI。
 - `get_service`
 - `search_tokens`
 - `search_business_patterns`
@@ -101,3 +103,5 @@ node dist/cli.js distill <project-root>
 <asset-package-dir>/reuse-report.md
 <asset-package-dir>/agent-rules.md
 ```
+
+若想把组件效果描述给其他 AI，运行 `node dist/cli.js web --port 4317`，在组件详情或预览工作台展开“效果描述提示词”并复制。正文按布局、视觉、动效、交互详细分项，分析依据和待核对项另行折叠展示。旧源码版提示词会要求重炼。重复炼化时 CLI 会显示源码索引解析/复用数量；仅未变文件的解析摘要复用，文件内容仍会读取并校验。

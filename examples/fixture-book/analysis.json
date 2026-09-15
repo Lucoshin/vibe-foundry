@@ -1,0 +1,420 @@
+{
+  "schemaVersion": "0.2.0",
+  "sourceDigest": "87870d8eddb9f51e5c06dd1a8b5d5715d8b9315d1c8e0934ab5c8ff132b76bea",
+  "processedChunkIds": [
+    "chunk-1"
+  ],
+  "entities": [
+    {
+      "id": "world-memory-light",
+      "type": "worldview",
+      "name": "以记忆换取光明",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "运行规则",
+          "value": "雾港没有太阳，人们使用记忆灯照明。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-4",
+              "quote": "雾港没有太阳，每户依靠记忆灯照明。"
+            }
+          ]
+        },
+        {
+          "name": "能力限制",
+          "value": "灯只能消耗主人自愿交出的记忆，无法夺取他人记忆。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-4",
+              "quote": "灯只燃烧主人自愿交出的记忆，不能取走他人的记忆。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "character-lin-lan",
+      "type": "character",
+      "name": "林岚",
+      "aliases": [
+        "阿岚"
+      ],
+      "facets": [
+        {
+          "name": "身份与称呼",
+          "value": "修灯师，别人称她为阿岚。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-5",
+              "quote": "林岚是修灯师，人们叫她“阿岚”。"
+            }
+          ]
+        },
+        {
+          "name": "目标",
+          "value": "寻找失踪的妹妹林汐。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-5",
+              "quote": "她的妹妹林汐失踪后，她一直寻找妹妹的下落。"
+            }
+          ]
+        },
+        {
+          "name": "说话特点",
+          "value": "短句，常把修灯置于谈话之前。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-6",
+              "quote": "林岚说话很短，常说：“先修灯，再说。”"
+            }
+          ]
+        },
+        {
+          "name": "关键选择",
+          "value": "为保留关于妹妹的最后记忆，宁可让灯熄灭。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-15",
+              "quote": "林岚拒绝交出关于妹妹的最后一段记忆，选择在黑暗里等待潮退。"
+            }
+          ]
+        },
+        {
+          "name": "价值倾向",
+          "value": "对妹妹的记忆比眼前的照明更重要。",
+          "basis": "interpretation",
+          "evidence": [
+            {
+              "unitId": "unit-15",
+              "quote": "林岚拒绝交出关于妹妹的最后一段记忆，选择在黑暗里等待潮退。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "character-lin-xi",
+      "type": "character",
+      "name": "林汐",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "身份与状态",
+          "value": "林岚失踪的妹妹。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-5",
+              "quote": "她的妹妹林汐失踪后，她一直寻找妹妹的下落。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "character-gu-watchman",
+      "type": "character",
+      "name": "顾舟",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "身份",
+          "value": "巡夜人，夜潮前检查街巷灯火。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-7",
+              "quote": "顾舟是巡夜人，负责在夜潮来临前检查街巷里的灯。"
+            }
+          ]
+        },
+        {
+          "name": "协助",
+          "value": "向林岚提供妹妹离港的线索。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-11",
+              "quote": "顾舟把一本旧航册交给林岚，指着妹妹离港的日期说：“去守灯塔找下一页。”"
+            }
+          ]
+        },
+        {
+          "name": "行为变化",
+          "value": "从坚持每家有灯到协助林岚保留记忆。",
+          "basis": "interpretation",
+          "evidence": [
+            {
+              "unitId": "unit-16",
+              "quote": "顾舟原本坚持家家有灯，此时却替林岚挡住巡查，允许她保留那段记忆。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "character-gu-merchant",
+      "type": "character",
+      "name": "顾舟",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "身份与消歧",
+          "value": "外港商贩，与巡夜人顾舟是不同的人。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-13",
+              "quote": "另一个名叫顾舟的人是外港商贩，与巡夜人并非同一人。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setting-memory-lamp",
+      "type": "setting",
+      "name": "记忆灯",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "用途",
+          "value": "供雾港住户照明。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-4",
+              "quote": "雾港没有太阳，每户依靠记忆灯照明。"
+            }
+          ]
+        },
+        {
+          "name": "代价与限制",
+          "value": "必须交出自己的记忆，不能夺取别人记忆。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-4",
+              "quote": "灯只燃烧主人自愿交出的记忆，不能取走他人的记忆。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setting-council",
+      "type": "setting",
+      "name": "议灯会",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "职能与制度",
+          "value": "分配新灯，要求住户每月登记灯火使用情况。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-9",
+              "quote": "议灯会负责分配新灯，并规定每家每月必须登记一次灯火的使用情况。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setting-tower",
+      "type": "setting",
+      "name": "守灯塔",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "位置与资料",
+          "value": "港口最北端的塔，保存百年航行记录。",
+          "basis": "explicit",
+          "evidence": [
+            {
+              "unitId": "unit-10",
+              "quote": "守灯塔位于港口最北端，塔内保存过去百年的航行记录。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "concept-memory-price",
+      "type": "concept",
+      "name": "记忆的代价",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "概念解读",
+          "value": "照明的现实收益与不可替代记忆的损失形成取舍。",
+          "basis": "interpretation",
+          "evidence": [
+            {
+              "unitId": "unit-15",
+              "quote": "林岚拒绝交出关于妹妹的最后一段记忆，选择在黑暗里等待潮退。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "metaphor-lamp",
+      "type": "metaphor",
+      "name": "记忆灯的象征",
+      "aliases": [],
+      "facets": [
+        {
+          "name": "意象与映射",
+          "value": "把记忆具象化为能消耗的灯火，可读为生存需要与个人记忆之间的交换。",
+          "basis": "interpretation",
+          "evidence": [
+            {
+              "unitId": "unit-4",
+              "quote": "灯只燃烧主人自愿交出的记忆，不能取走他人的记忆。"
+            }
+          ]
+        },
+        {
+          "name": "解读边界",
+          "value": "这是基于短篇的读者解读，文本未明说作者意图。",
+          "basis": "interpretation",
+          "evidence": [
+            {
+              "unitId": "unit-17",
+              "quote": "林岚把熄灭的灯握在掌心，继续向北走。"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "relation-rule-lamp",
+      "from": "world-memory-light",
+      "to": "setting-memory-lamp",
+      "type": "约束",
+      "description": "记忆交换规则约束灯的能力。",
+      "basis": "explicit",
+      "evidence": [
+        {
+          "unitId": "unit-4",
+          "quote": "灯只燃烧主人自愿交出的记忆，不能取走他人的记忆。"
+        }
+      ]
+    },
+    {
+      "id": "relation-search",
+      "from": "character-lin-lan",
+      "to": "character-lin-xi",
+      "type": "寻找妹妹",
+      "description": "林岚寻找失踪的妹妹林汐。",
+      "basis": "explicit",
+      "evidence": [
+        {
+          "unitId": "unit-5",
+          "quote": "她的妹妹林汐失踪后，她一直寻找妹妹的下落。"
+        }
+      ]
+    },
+    {
+      "id": "relation-help",
+      "from": "character-gu-watchman",
+      "to": "character-lin-lan",
+      "type": "提供线索",
+      "description": "顾舟以旧航册提供妹妹离港的日期与后续查找方向。",
+      "basis": "explicit",
+      "evidence": [
+        {
+          "unitId": "unit-11",
+          "quote": "顾舟把一本旧航册交给林岚，指着妹妹离港的日期说：“去守灯塔找下一页。”"
+        }
+      ]
+    },
+    {
+      "id": "relation-council-lamp",
+      "from": "setting-council",
+      "to": "setting-memory-lamp",
+      "type": "分配和登记",
+      "description": "议灯会负责新灯和灯火登记制度。",
+      "basis": "explicit",
+      "evidence": [
+        {
+          "unitId": "unit-9",
+          "quote": "议灯会负责分配新灯，并规定每家每月必须登记一次灯火的使用情况。"
+        }
+      ]
+    },
+    {
+      "id": "relation-refusal",
+      "from": "character-lin-lan",
+      "to": "setting-memory-lamp",
+      "type": "拒绝继续供灯",
+      "description": "为保留最后的妹妹记忆，林岚不再交出那段记忆。",
+      "basis": "explicit",
+      "evidence": [
+        {
+          "unitId": "unit-15",
+          "quote": "林岚拒绝交出关于妹妹的最后一段记忆，选择在黑暗里等待潮退。"
+        }
+      ]
+    },
+    {
+      "id": "relation-symbol-concept",
+      "from": "metaphor-lamp",
+      "to": "concept-memory-price",
+      "type": "象征映射",
+      "description": "灯把抽象记忆变成照明的燃料，呈现记忆代价这一解读。",
+      "basis": "interpretation",
+      "evidence": [
+        {
+          "unitId": "unit-4",
+          "quote": "灯只燃烧主人自愿交出的记忆，不能取走他人的记忆。"
+        }
+      ]
+    },
+    {
+      "id": "relation-choice-concept",
+      "from": "character-lin-lan",
+      "to": "concept-memory-price",
+      "type": "体现取舍",
+      "description": "林岚的选择使记忆与生存条件的取舍具体化。",
+      "basis": "interpretation",
+      "evidence": [
+        {
+          "unitId": "unit-15",
+          "quote": "林岚拒绝交出关于妹妹的最后一段记忆，选择在黑暗里等待潮退。"
+        }
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "description": "老人关于灯会吃掉名字的说法未经证实，不能当作世界规则。",
+      "evidence": [
+        {
+          "unitId": "unit-12",
+          "quote": "街边的老人说：“灯会吃掉人的名字。”林岚没有找到能够证实这句话的记录。"
+        }
+      ]
+    },
+    {
+      "description": "第三章的顾舟按巡查语境倾向于巡夜人，但该句未再次直说身份，行为变化暂列解读。",
+      "evidence": [
+        {
+          "unitId": "unit-16",
+          "quote": "顾舟原本坚持家家有灯，此时却替林岚挡住巡查，允许她保留那段记忆。"
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ project: VibeFoundry
 category: docs-index
 source_path: docs/README.md
 status: active
-last_updated: 2026-09-01
+last_updated: 2026-09-08
 ---
 
 # VibeFoundry 文档索引
@@ -28,6 +28,59 @@ last_updated: 2026-09-01
 
 ## 3. 技术与执行
 
+- [预览左右切换](plans/2026-09-15-preview-navigation.md)：按筛选顺序连续查看，首尾禁用。
+
+- [放大预览复用实例](plans/2026-09-15-preview-instance-reuse.md)：复用已加载 iframe，返回列表保留状态。
+
+- [可见组件预览与源调用场景](plans/2026-09-15-preview-visible-scenarios.md)：滚动按需加载、真实父组件场景与入参说明。
+
+- [Vue 2 / Vue 3 双版本组件预览](plans/2026-09-15-vue-dual-preview.md)
+  - Vue 2.6、2.7、3 的编译、挂载与源依赖解析；取代此前 Vue 2 一律拦截。
+
+- [组件预览不支持状态与稳定等待界面](plans/2026-09-15-preview-error-states.md)
+  - 中文错误页与等待期间的后台探测；历史 Vue 2 拦截已由双版本支持取代。
+
+- [零点零工真实项目炼化验证](plans/2026-09-15-lingdian-project-import.md)
+  - 移动端条件编译解析阻塞修复、两端真实资产及预览边界。
+
+- [组件预览修复与提速](plans/2026-09-15-preview-reliability-and-speed.md)
+  - 本地构建工具、失败处理和组件预览后台准备。
+
+- [Web 克制简约交互](plans/2026-09-15-web-calm-design.md)
+  - 统一排版、稳定详情与预览、简化导入、修复聚合统计。
+
+- [Web 本地选择与炼化](plans/2026-09-15-web-local-import.md)
+  - 页面内选择项目文件夹或文档、任务状态和真实结果交付。
+
+- [Web 空资产库正常布局](plans/2026-09-15-web-empty-library.md)
+  - 空库保留应用布局，区分首次使用与资产读取错误。
+
+- [书籍世界观、角色卡与概念网络](plans/2026-09-08-book-knowledge-assets.md)
+  - 自行实现分块任务、来源校验与五类知识资产；当前边界见计划。
+- [ADR-006：带证据的书籍知识资产](adr/006-book-knowledge-assets.md)
+  - 开源取长补短、宿主 AI 阅读和语义资产协议。
+- [书籍炼化开源取舍](research/2026-09-08-book-knowledge-open-source.md)
+  - 官方实现的能力、局限，以及本项目自行开发时采用的部分。
+- [书籍知识资产使用手册](runbooks/distill-book-knowledge.md)
+  - 准备阅读任务、AI 分析、严格导入与离线关系图。
+- [书籍知识资产首版验收](reports/2026-09-08-book-knowledge-validation.md)
+  - 375 项测试、真实 CLI 与浏览器检查，区分宿主 AI 工作流和后续自动化。
+
+- [组件效果提示词](plans/2026-09-08-component-effect-prompts.md)
+  - 当前要求：将组件布局、视觉、动效和交互转为产品可复制的专业描述，替代源码打包式正文。
+- [组件效果提示词验收](reports/2026-09-08-component-effect-prompt-validation.md)
+  - 当前四项专业描述、319 项测试、速度实测和静态分析边界。
+
+- [组件还原提示词与炼化提速](plans/2026-09-08-component-reconstruction-and-speed.md)
+  - 共享源码、内容缓存、样式证据以及 Web/MCP 提示词交付。
+- [组件还原与提速验收](reports/2026-09-08-component-reconstruction-validation.md)
+  - 269 个测试、CLI/MCP 完整验证、多组件耗时和静态保真边界。
+- [ADR-005：组件还原提示词与快速源码分析](adr/005-component-reconstruction-prompts.md)
+  - 提示词产物协议、按需读取、跨 AI 使用和静态保真边界。
+- [资产真实性修复与能力现状审计计划](plans/2026-09-08-asset-integrity-and-capability-audit.md)
+  - 2026-09-08 复核“信息资产 → AI/人可使用的装甲”愿景，修复来源混淆、虚构默认结果和书籍漏识别。
+- [项目现状与未完成功能审计](reports/2026-09-08-project-capability-audit.md)
+  - 区分已完成能力、实现缺口、明确暂缓范围和本轮验证结果。
 - [开源准备设计](plans/2026-09-01-open-source-readiness-design.md)
   - Apache-2.0 发布边界、信任模型、跨平台资产库契约和公开前门槛。
 - [开源准备实施计划](plans/2026-09-01-open-source-readiness.md)
@@ -49,7 +102,7 @@ last_updated: 2026-09-01
 - [Quickstart](runbooks/quickstart.md)
   - 10 分钟内完成构建、fixture distill、MCP 查询和插件检查。
 - [Web Asset Browser 使用手册](runbooks/use-web-asset-browser.md)
-  - 本地只读 Web 资产浏览器的启动、界面结构和 API。
+  - 本地 Web 资产浏览器的启动、选择炼化、界面结构和 API。
 - [Web Asset Browser 资产交互增强](plans/2026-07-08-web-asset-browser-asset-interactions.md)
   - 资产卡片语言标识、组件交互预览、动画演示和真实前端项目验证。
 - [Component Preview Runtime](plans/2026-07-08-component-preview-runtime.md)
@@ -109,6 +162,7 @@ last_updated: 2026-09-01
   - `reuse-report.md`
   - `agent-rules.md`
   - `concept-assets.json`
+  - `component-prompts/<component-path-hash>.json`：每组件的独立效果描述提示词，当前为 `0.2.0`。
 - 识别基础工程资产：
   - 前端组件。
   - 后端 service。
@@ -148,9 +202,11 @@ last_updated: 2026-09-01
   - `src/web/server.ts`
   - `node dist/cli.js web --port 4317`
   - 默认聚合集中资产库，显式传入 `<project-root>` 时保留单项目查看。
+  - 组件详情和预览工作台可按需查看、复制效果描述提示词，按布局、视觉、动效、交互分项；MCP 使用 `get_component_prompt` 按文件路径查询。
   - `VibeFoundry.pen` 四屏 Pencil 设计板
   - `output/pencil-web-design/AJTN7.png` Pencil 导出验证图
 - 书籍炼化 CLI：`node dist/cli.js distill-book <book-path>`，输出到集中资产库的 `books` 目录。
+- 书籍知识资产：`--prepare <new-work-dir>` 生成宿主 AI 阅读任务，`--analysis <analysis-json>` 校验并输出世界观、人物角色卡、设定、概念/隐喻以及离线有向关系图。语义阅读和跨块归并由宿主 AI 执行，尚无自动模型调用或统一 Web/MCP 书籍入口。
 - GitHub 源码开源发布面：Apache-2.0、社区文件、Issue/PR 模板、Dependabot 和最小权限 CI。
 
 集中资产库中的索引和 manifest 可能包含源码项目的绝对路径，只用于本机回查，不应提交或直接分享。
@@ -164,4 +220,4 @@ npm run build
 
 ## 6. 后续工作入口
 
-MVP 已按总实现文档收口。后续新增能力应先新增计划文档或 ADR。
+MVP 已按总实现文档收口，但不代表后续增量或“装甲”愿景已经实现。当前优先核对[现状审计](reports/2026-09-08-project-capability-audit.md)及[书籍知识资产增量](plans/2026-09-08-book-knowledge-assets.md)：书籍自动模型执行和统一 Web/MCP 消费、源项目实机校准 Task 4–9、业务契约提取和任务级能力交付仍有缺口。后续新增能力应先新增计划文档或 ADR。

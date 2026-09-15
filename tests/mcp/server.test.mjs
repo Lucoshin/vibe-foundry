@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -125,14 +126,14 @@ async function createAssetPackageFixture() {
       {
         kind: "component",
         name: "Button",
-        sourceFile: "src/components/Button.tsx",
+        filePath: "src/components/Button.tsx",
         componentType: "base-ui",
         score: 0.8,
       },
       {
         kind: "component",
         name: "确认按钮",
-        sourceFile: "src/components/ConfirmButton.tsx",
+        filePath: "src/components/ConfirmButton.tsx",
         componentType: "base-ui",
         score: 0.8,
       },
@@ -229,6 +230,7 @@ describe("VibeFoundry MCP readonly server", () => {
       [
         "list_assets",
         "get_component",
+        "get_component_prompt",
         "get_service",
         "search_tokens",
         "search_business_patterns",
@@ -238,6 +240,7 @@ describe("VibeFoundry MCP readonly server", () => {
       ],
     );
     assert.ok(tools.every((tool) => tool.inputSchema?.type === "object"));
+    assert.match(tools.find((tool) => tool.name === "get_component_prompt").description, /natural-language.*layout.*visual.*interaction/i);
   });
 
   it("queries components, services, tokens, patterns, concepts, rules, and usage validation from the central package", async () => {
@@ -277,6 +280,55 @@ describe("VibeFoundry MCP readonly server", () => {
     assert.match(rules.structuredContent.markdown, /VibeFoundry Agent Rules/);
     assert.equal(validation.structuredContent.exists, true);
     assert.match(validation.structuredContent.guidance[0], /auth\.register/);
+  });
+
+  it("reads component prompts by exact filePath even when names are identical", async () => {
+    const { root, assetDir } = await createAssetPackageFixture();
+    const { writeComponentPrompts } = await import("../../dist/library/component-prompts.js");
+    const { callVibeFoundryTool } = await loadServer();
+    const components = [{ name: "Button", filePath: "src/components/Button.tsx" }, { name: "Button", filePath: "src/admin/Button.tsx" }];
+    await writeJson(join(assetDir, "component-catalog.json"), { components });
+    const records = components.map((component, index) => ({ schemaVersion: "0.2.0", componentName: component.name, filePath: component.filePath, sourceDigest: String(index + 1).repeat(64), sourceFiles: [component.filePath], unresolved: [], prompt: index === 0 ? "横向布局，使用细描边。" : "纵向布局，使用圆角。" }));
+    await writeComponentPrompts(assetDir, records);
+    const result = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/admin/Button.tsx" });
+    assert.equal(result.isError, false);
+    assert.deepEqual(result.structuredContent, records[1]);
+    const normalized = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src\\admin\\Button.tsx" });
+    assert.deepEqual(normalized.structuredContent, records[1]);
+  });
+
+  it("does not invent prompts for missing arguments, paths, ambiguous catalogs or old packages", async () => {
+    const { root, assetDir } = await createAssetPackageFixture();
+    const { callVibeFoundryTool } = await loadServer();
+    for (const args of [{}, { filePath: "src/unknown.tsx" }]) {
+      const result = await callVibeFoundryTool(root, "get_component_prompt", args);
+      assert.equal(result.isError, true);
+      assert.match(result.structuredContent.message, /filePath.*required|not found/i);
+    }
+    const legacy = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/components/Button.tsx" });
+    assert.equal(legacy.isError, true);
+    assert.match(legacy.structuredContent.message, /distill/);
+    assert.equal((await callVibeFoundryTool(root, "get_component", { name: "Button" })).isError, false);
+    await writeJson(join(assetDir, "component-catalog.json"), { components: [{ name: "A", filePath: "src/Button.tsx" }, { name: "B", filePath: "src/Button.tsx" }] });
+    const ambiguous = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/Button.tsx" });
+    assert.equal(ambiguous.isError, true);
+    assert.match(ambiguous.structuredContent.message, /ambiguous/i);
+  });
+
+  it("rejects old source prompts while keeping other asset tools available", async () => {
+    const { root, assetDir } = await createAssetPackageFixture();
+    const { callVibeFoundryTool } = await loadServer();
+    const filePath = "src/components/Button.tsx";
+    const directory = join(assetDir, "component-prompts");
+    await mkdir(directory);
+    await writeJson(join(directory, createHash("sha256").update(filePath).digest("hex") + ".json"), {
+      schemaVersion: "0.1.0", componentName: "Button", filePath, sourceDigest: "a".repeat(64), sourceFiles: [filePath], unresolved: [], prompt: "export function Button() {}",
+    });
+    const result = await callVibeFoundryTool(root, "get_component_prompt", { filePath });
+    assert.equal(result.isError, true);
+    assert.match(result.structuredContent.message, /提示词格式已更新，请重新炼化/);
+    assert.doesNotMatch(JSON.stringify(result), /export function/);
+    assert.equal((await callVibeFoundryTool(root, "get_component", { name: "Button" })).isError, false);
   });
 
   it("returns a clear error when the asset package is missing", async () => {
@@ -390,7 +442,7 @@ describe("VibeFoundry MCP readonly server", () => {
     });
 
     assert.equal(toolsResponse.jsonrpc, "2.0");
-    assert.equal(toolsResponse.result.tools.length, 8);
+    assert.equal(toolsResponse.result.tools.length, 9);
     assert.equal(callResponse.result.structuredContent.component.name, "Button");
   });
 
@@ -419,7 +471,7 @@ describe("VibeFoundry MCP readonly server", () => {
       );
       const tools = await server.receive();
       assert.equal(tools.id, 2, "notifications/initialized must not produce a response");
-      assert.equal(tools.result.tools.length, 8);
+      assert.equal(tools.result.tools.length, 9);
 
       server.send({
         jsonrpc: "2.0",

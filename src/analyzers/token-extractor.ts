@@ -78,14 +78,15 @@ function variableTokens(sourceText, filePath) {
   ));
 }
 
-export async function extractTokens(projectRoot, sourceDirs) {
+export async function extractTokens(projectRoot, sourceDirs, options = {}) {
   const files = await listFiles(projectRoot, sourceDirs, [
     ".tsx", ".jsx", ".ts", ".js", ".vue", ".css", ".scss", ".sass", ".less",
   ]);
   const tokenMap = new Map();
+  const sourceTexts = new Map((options.sourceIndex?.files ?? []).map((file) => [file.filePath, file.sourceText]));
 
   for (const file of files) {
-    const sourceText = await readTextFile(file.fullPath);
+    const sourceText = sourceTexts.has(file.filePath) ? sourceTexts.get(file.filePath) : await readTextFile(file.fullPath);
     for (const variable of variableTokens(sourceText, file.filePath)) {
       const key = `${variable.syntax}:${variable.scope}:${variable.name}:${variable.value}`;
       const existing = tokenMap.get(key) ?? {

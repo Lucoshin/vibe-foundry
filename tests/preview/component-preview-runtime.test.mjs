@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { delimiter, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { describe, it } from "node:test";
 
 import {
   buildComponentPreviewStaticBundle,
   buildComponentPreviewRegistry,
+  createPreviewBuildProcessSpec,
   discoverPreviewRuntimeContext,
   discoverPreviewStyleImports,
   prepareComponentPreviewRuntime,
@@ -37,7 +39,7 @@ async function createActionBuildFixture() {
     exportName: "default",
     kind: "component",
     sourceFingerprint: "source-a",
-  }], {
+  }], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
     generatedAt: "2026-07-14T00:00:00.000Z",
     runtimeContext: {
       providers: [],
@@ -53,14 +55,8 @@ async function createActionBuildFixture() {
   return { projectRoot, assetDir, registry };
 }
 
-function posixShellQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
-}
-
-async function createFakeNpxBin(root, observationPath) {
-  const fakeBin = join(root, "fake-npx-bin");
-  const runnerPath = join(fakeBin, "fake-npx-runner.mjs");
-  await mkdir(fakeBin, { recursive: true });
+async function createObservingBuildProcess(root, observationPath) {
+  const runnerPath = join(root, "build runner with spaces.mjs");
   await writeFile(
     runnerPath,
     [
@@ -68,7 +64,7 @@ async function createFakeNpxBin(root, observationPath) {
       'import { join, resolve } from "node:path";',
       "const args = process.argv.slice(2);",
       'const outDirIndex = args.indexOf("--outDir");',
-      'if (outDirIndex < 0 || !args[outDirIndex + 1]) throw new Error("fake npx requires --outDir");',
+      'if (outDirIndex < 0 || !args[outDirIndex + 1]) throw new Error("build runner requires --outDir");',
       "const outputDir = resolve(process.cwd(), args[outDirIndex + 1]);",
       `writeFileSync(${JSON.stringify(observationPath)}, JSON.stringify({ args, env: process.env }));`,
       "mkdirSync(outputDir, { recursive: true });",
@@ -76,24 +72,32 @@ async function createFakeNpxBin(root, observationPath) {
     ].join("\n"),
   );
 
-  if (process.platform === "win32") {
-    await writeFile(
-      join(fakeBin, "npx.cmd"),
-      `@echo off\r\n"${process.execPath}" "${runnerPath}" %*\r\n`,
-    );
-  } else {
-    const shimPath = join(fakeBin, "npx");
-    await writeFile(
-      shimPath,
-      `#!/bin/sh\nexec ${posixShellQuote(process.execPath)} ${posixShellQuote(runnerPath)} "$@"\n`,
-    );
-    await chmod(shimPath, 0o755);
-  }
-
-  return fakeBin;
+  return { command: process.execPath, args: [runnerPath, "--outDir", "dist"] };
 }
 
 describe("component preview runtime", () => {
+  it("requires an explicit project root when registering previews", () => {
+    assert.throws(() => buildComponentPreviewRegistry([]), /projectRoot.*required/i);
+    assert.throws(() => buildComponentPreviewRegistry([], { projectRoot: " " }), /projectRoot.*required/i);
+  });
+
+  it("isolates same-path previews across projects and keeps their routes stable", () => {
+    const component = { name: "Button", filePath: "src/Button.tsx", exportMode: "named" };
+    const projectRoot = join(tmpdir(), "preview-project-a");
+    const first = buildComponentPreviewRegistry([component], { projectRoot }).previews[0];
+    const repeat = buildComponentPreviewRegistry([component], { projectRoot }).previews[0];
+    const second = buildComponentPreviewRegistry([component], { projectRoot: join(tmpdir(), "preview-project-b") }).previews[0];
+    const otherPath = buildComponentPreviewRegistry([{ ...component, filePath: "src/admin/Button.tsx" }], { projectRoot }).previews[0];
+    assert.equal(first.id, repeat.id);
+    assert.notEqual(first.id, second.id);
+    assert.notEqual(first.browserUrl, second.browserUrl);
+    assert.notEqual(first.id, otherPath.id);
+    assert.notEqual(first.actionDigest, second.actionDigest);
+    const customFirst = buildComponentPreviewRegistry([component], { projectRoot, buildOptions: { minify: false } }).previews[0];
+    const customSecond = buildComponentPreviewRegistry([component], { projectRoot: join(tmpdir(), "preview-project-b"), buildOptions: { minify: false } }).previews[0];
+    assert.notEqual(customFirst.actionDigest, customSecond.actionDigest);
+  });
+
   it("marks unverified or unresolved previews as degraded instead of ready", () => {
     const registry = buildComponentPreviewRegistry([
       {
@@ -124,7 +128,7 @@ describe("component preview runtime", () => {
           events: [],
         },
       },
-    ]);
+    ], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
 
     assert.equal(registry.previews[0].status, "degraded");
     assert.equal(registry.previews[0].buildable, true);
@@ -140,7 +144,7 @@ describe("component preview runtime", () => {
       name: "ShareJobPanel",
       filePath: "src/ShareJobPanel.jsx",
       exportMode: "default",
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
 
     const files = buildPreviewRuntimeFiles(registry);
     const source = files[`src/previews/${registry.previews[0].id}.jsx`];
@@ -156,7 +160,7 @@ describe("component preview runtime", () => {
       exportMode: "default",
       sourceFingerprint: "1111111111111111",
     };
-    const first = buildComponentPreviewRegistry([component], {
+    const first = buildComponentPreviewRegistry([component], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
       runtimeContext: { fingerprint: "runtime-a" },
       builderDigest: "builder-a",
       toolchain: { node: "24.12.0", vite: "5.4.21", plugins: [] },
@@ -165,13 +169,13 @@ describe("component preview runtime", () => {
     const second = buildComponentPreviewRegistry([{
       ...component,
       sourceFingerprint: "2222222222222222",
-    }], {
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
       runtimeContext: { fingerprint: "runtime-a" },
       builderDigest: "builder-a",
       toolchain: { node: "24.12.0", vite: "5.4.21", plugins: [] },
       platform: { os: "win32", arch: "x64" },
     });
-    const builderChanged = buildComponentPreviewRegistry([component], {
+    const builderChanged = buildComponentPreviewRegistry([component], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
       runtimeContext: { fingerprint: "runtime-a" },
       builderDigest: "builder-b",
       toolchain: { node: "24.12.0", vite: "5.4.21", plugins: [] },
@@ -193,7 +197,7 @@ describe("component preview runtime", () => {
       kind: "component",
       platformRuntime: "uni-h5",
       platformComponents: ["picker-view", "picker-view-column", "view"],
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
     const files = buildPreviewRuntimeFiles(registry, { runtime: "vite-vue" });
 
     assert.equal(registry.previews[0].platformRuntime, "uni-h5");
@@ -226,7 +230,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     assert.equal(registry.schemaVersion, "0.1.0");
@@ -243,7 +247,7 @@ describe("component preview runtime", () => {
   it("marks components without an export contract as blocked", () => {
     const registry = buildComponentPreviewRegistry(
       [{ name: "UnknownCard", filePath: "src/components/UnknownCard.jsx", kind: "component" }],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     assert.equal(registry.previews[0].status, "blocked");
@@ -261,7 +265,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     assert.equal(registry.runtime, "vite-vue");
@@ -283,7 +287,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     const files = buildPreviewRuntimeFiles(registry, {
@@ -296,16 +300,13 @@ describe("component preview runtime", () => {
     assert.match(files["vite.config.js"], /transformWithEsbuild/);
     assert.match(files["vite.config.js"], /createRequire/);
     assert.match(files["vite.config.js"], /pathToFileURL/);
-    assert.match(files["vite.config.js"], /process\.argv\[1\]/);
+    assert.match(files["vite.config.js"], /requireFromPreviewToolchain/);
+    assert.doesNotMatch(files["vite.config.js"], /process\.argv\[1\]/);
     assert.match(files["vite.config.js"], /VIBE_FOUNDRY_PREVIEW_BASE/);
     assert.match(files["vite.config.js"], /resolve:\s*\{/);
     assert.ok(files["vite.config.js"].includes('{ find: /^@\\//, replacement: resolve(projectRoot, "src") + "/" }'));
     assert.match(files["vite.config.js"], /replacement: resolve\(projectRoot, "src"\) \+ "\/"/);
-    assert.match(files["vite.config.js"], /projectDependencyAliases/);
-    assert.match(files["vite.config.js"], /previewRuntimeDependencyNames/);
-    assert.match(files["vite.config.js"], /!previewRuntimeDependencyNames\.has\(name\)/);
-    assert.match(files["vite.config.js"], /readFileSync\(resolve\(projectRoot, "package\.json"\)/);
-    assert.match(files["vite.config.js"], /resolve\(projectRoot, "node_modules", name\)/);
+    assert.match(files["vite.config.js"], /vibe-preview-project-dependencies/);
     assert.match(files["vite.config.js"], /dist\/node\/index\.js/);
     assert.doesNotMatch(files["vite.config.js"], /from "vite"/);
     assert.match(files["vite.config.js"], /name: "vibe-foundry-jsx-in-js-loader"/);
@@ -362,7 +363,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     const files = buildPreviewRuntimeFiles(registry);
@@ -384,7 +385,7 @@ describe("component preview runtime", () => {
         props: { visible: false, jobTitle: "真实调用标题" },
         events: ["onClose"],
       },
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
 
     const files = buildPreviewRuntimeFiles(registry);
     const source = files[`src/previews/${registry.previews[0].id}.jsx`];
@@ -407,7 +408,7 @@ describe("component preview runtime", () => {
         events: [],
         slots: { default: "保存" },
       },
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
     const vueRegistry = buildComponentPreviewRegistry([{
       name: "BasicButton",
       filePath: "src/BasicButton.vue",
@@ -419,7 +420,7 @@ describe("component preview runtime", () => {
         events: [],
         slots: { default: "登录" },
       },
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
 
     const reactSource = buildPreviewRuntimeFiles(reactRegistry)[`src/previews/${reactRegistry.previews[0].id}.jsx`];
     const vueSource = buildPreviewRuntimeFiles(vueRegistry, { runtime: "vite-vue" })[`src/previews/${vueRegistry.previews[0].id}.vue`];
@@ -443,7 +444,7 @@ describe("component preview runtime", () => {
         },
         events: [],
       },
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
 
     const source = buildPreviewRuntimeFiles(registry)[`src/previews/${registry.previews[0].id}.jsx`];
 
@@ -462,11 +463,10 @@ describe("component preview runtime", () => {
         props: { title: "岗位草稿" },
         events: [],
       },
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
     const preview = registry.previews[0];
     const files = buildPreviewRuntimeFiles(registry, {
       runtime: "vite-vue",
-      slotNamesByPreview: { [preview.id]: ["default", "right"] },
     });
     const source = files[`src/previews/${preview.id}.vue`];
 
@@ -529,6 +529,40 @@ describe("component preview runtime", () => {
     }
   });
 
+  it("uses the shared source snapshot for runtime providers and entry styles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-runtime-snapshot-"));
+    try {
+      await mkdir(join(root, "src"));
+      await writeJson(join(root, "package.json"), { dependencies: { "react-router-dom": "6.0.0", antd: "5.0.0" } });
+      await writeFile(join(root, "src", "theme.css"), ":root { --primary: #123456; }");
+      const sourceIndex = { files: [{ filePath: "src/main.tsx", sourceText: "import './theme.css'; import { BrowserRouter } from 'react-router-dom';" }] };
+      const context = await discoverPreviewRuntimeContext(root, { sourceIndex });
+      assert.deepEqual(context.providers, ["react-router-memory"]);
+      assert.deepEqual(context.globalStyles, ["src/theme.css"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inject antd styles without an authored import and includes Next layout styles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-runtime-layout-"));
+    try {
+      await mkdir(join(root, "app"));
+      await writeJson(join(root, "package.json"), { dependencies: { antd: "5.0.0", next: "15.0.0" } });
+      const empty = await discoverPreviewRuntimeContext(root);
+      assert.deepEqual(empty.globalStyles, []);
+      await writeFile(join(root, "app", "layout.tsx"), "import './globals.css'; export default function Layout() { return null; }");
+      await writeFile(join(root, "app", "globals.css"), ":root { --primary: #123456; }");
+      const first = await discoverPreviewRuntimeContext(root);
+      assert.deepEqual(first.globalStyles, ["app/globals.css"]);
+      await writeFile(join(root, "app", "globals.css"), ":root { --primary: #654321; }");
+      const changed = await discoverPreviewRuntimeContext(root);
+      assert.notEqual(changed.fingerprint, first.fingerprint);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("discovers styles imported by the real component usage source", async () => {
     const root = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-usage-styles-"));
     try {
@@ -555,7 +589,7 @@ describe("component preview runtime", () => {
       networkPolicy: "block-external",
       unresolved: ["redux-store"],
     };
-    const registry = buildComponentPreviewRegistry([], { runtimeContext });
+    const registry = buildComponentPreviewRegistry([], { projectRoot: join(tmpdir(), "preview-runtime-fixture"), runtimeContext });
 
     assert.deepEqual(registry.runtimeContext, runtimeContext);
   });
@@ -565,7 +599,7 @@ describe("component preview runtime", () => {
       name: "AccountLink",
       filePath: "src/AccountLink.jsx",
       exportMode: "default",
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
     const reactFiles = buildPreviewRuntimeFiles(reactRegistry, {
       runtimeContext: {
         providers: ["react-router-memory"],
@@ -584,7 +618,7 @@ describe("component preview runtime", () => {
       name: "AccountPanel",
       filePath: "src/AccountPanel.vue",
       exportMode: "default",
-    }]);
+    }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
     const vueFiles = buildPreviewRuntimeFiles(vueRegistry, {
       runtimeContext: {
         providers: ["vue-pinia", "vue-router-memory"],
@@ -613,7 +647,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     const files = buildPreviewRuntimeFiles(registry, {
@@ -652,6 +686,30 @@ describe("component preview runtime", () => {
     assert.equal(files[`src/previews/${preview.id}.jsx`], undefined);
   });
 
+  it("sends the compiled action digest in React and Vue mount reports", () => {
+    for (const extension of ["tsx", "vue"]) {
+      const registry = buildComponentPreviewRegistry([{
+        name: "Button", filePath: `src/Button.${extension}`, exportMode: "default",
+      }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
+      const files = buildPreviewRuntimeFiles(registry);
+      const source = files[extension === "vue" ? "src/App.js" : "src/App.jsx"];
+      const start = source.indexOf("function reportPreviewMounted(");
+      const reporterSource = source.slice(start, source.indexOf("\n}\n", start) + 2);
+      const frames = [];
+      const requests = [];
+      const report = new Function("window", "document", "fetch", `${reporterSource}; return reportPreviewMounted;`)(
+        { requestAnimationFrame: (callback) => frames.push(callback) },
+        { querySelector: () => ({ querySelector: () => null }) },
+        (url) => { requests.push(url); return Promise.resolve(); },
+      );
+      const preview = registry.previews[0];
+      report(preview.id, preview.actionDigest);
+      while (frames.length) frames.shift()();
+      assert.deepEqual(requests, [`/api/component-preview-validation/${preview.id}?actionDigest=${preview.actionDigest}`]);
+      assert.match(source, /reportPreviewMounted\(activePreview\??\.id, activePreview\??\.actionDigest\)/);
+    }
+  });
+
   it("generates syntactically valid Vue Vite config", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-config-"));
     try {
@@ -665,7 +723,7 @@ describe("component preview runtime", () => {
             kind: "component",
           },
         ],
-        { generatedAt: "2026-07-08T00:00:00.000Z" },
+        { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
       );
       const files = buildPreviewRuntimeFiles(registry);
       const configPath = join(projectRoot, "vite.config.mjs");
@@ -733,7 +791,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
 
     const files = buildPreviewRuntimeFiles(registry, { runtime: "vite-vue" });
@@ -769,7 +827,7 @@ describe("component preview runtime", () => {
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
     const selected = registry.previews.find((preview) => preview.componentName === "AppEmptyState");
 
@@ -808,7 +866,7 @@ describe("component preview runtime", () => {
             kind: "component",
           },
         ],
-        { generatedAt: "2026-07-08T00:00:00.000Z" },
+        { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
       );
       const selected = registry.previews.find((preview) => preview.componentName === "AppEmptyState");
       const previewRoot = join(
@@ -867,7 +925,7 @@ describe("component preview runtime", () => {
         exportName: "default",
         kind: "component",
         sourceFingerprint: "source-central",
-      }], {
+      }], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
         generatedAt: "2026-09-01T00:00:00.000Z",
         runtimeContext: {
           providers: [],
@@ -948,7 +1006,7 @@ describe("component preview runtime", () => {
           kind: "component",
           sourceFingerprint: "source-a",
         },
-      ], {
+      ], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
         generatedAt: "2026-07-14T00:00:00.000Z",
         runtimeContext: {
           providers: [],
@@ -1004,7 +1062,7 @@ describe("component preview runtime", () => {
         exportName: "default",
         kind: "component",
         sourceFingerprint: "source-a",
-      }], {
+      }], { projectRoot: join(tmpdir(), "preview-runtime-fixture"),
         generatedAt: "2026-07-14T00:00:00.000Z",
         runtimeContext: {
           providers: [],
@@ -1081,7 +1139,7 @@ describe("component preview runtime", () => {
         SYSTEMROOT: "C:\\Windows",
         TEMP: "C:\\Temp",
         BROWSER: "none",
-        VIBE_FOUNDRY_PREVIEW_BASE: fixture.registry.previews[0].browserUrl,
+        VIBE_FOUNDRY_PREVIEW_BASE: `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`,
       });
     } finally {
       await rm(fixture.projectRoot, { recursive: true, force: true });
@@ -1089,15 +1147,12 @@ describe("component preview runtime", () => {
     }
   });
 
-  it("spawns the real preview build path through a sanitized fake npx", async () => {
+  it("spawns a Node build process with an argument path containing spaces and a sanitized environment", async () => {
     const fixture = await createActionBuildFixture();
     try {
       const observationPath = join(fixture.assetDir, "observed-preview-environment.json");
-      const fakeBin = await createFakeNpxBin(fixture.assetDir, observationPath);
-      const systemRoot = process.env.SYSTEMROOT ?? process.env.SystemRoot;
-      const testPath = process.platform === "win32"
-        ? `${fakeBin}${delimiter}${join(systemRoot, "System32")}`
-        : fakeBin;
+      const buildProcessSpec = await createObservingBuildProcess(fixture.assetDir, observationPath);
+      const testPath = join(fixture.assetDir, "no tools on PATH");
       const forbiddenEnvironment = {
         CUSTOM_PROJECT_SETTING: "custom-setting-sentinel",
         VITE_PRIVATE_TOKEN: "vite-secret-sentinel",
@@ -1107,9 +1162,9 @@ describe("component preview runtime", () => {
       const result = await buildComponentPreviewStaticBundle(fixture.projectRoot, {
         assetDir: fixture.assetDir,
         component: fixture.registry.previews[0].id,
+        buildProcessSpec,
         hostEnvironment: {
           PATH: testPath,
-          PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
           SYSTEMROOT: process.env.SYSTEMROOT,
           WINDIR: process.env.WINDIR,
           COMSPEC: process.env.COMSPEC,
@@ -1124,7 +1179,7 @@ describe("component preview runtime", () => {
         assert.equal(observed.env[name], undefined);
       }
       assert.equal(observed.env.BROWSER, "none");
-      assert.equal(observed.env.VIBE_FOUNDRY_PREVIEW_BASE, fixture.registry.previews[0].browserUrl);
+      assert.equal(observed.env.VIBE_FOUNDRY_PREVIEW_BASE, `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`);
       assert.equal(observed.env.PATH, testPath);
       assert.ok(observed.args.includes("--outDir"));
 
@@ -1135,6 +1190,8 @@ describe("component preview runtime", () => {
           assert.equal(artifact.includes(value), false);
         }
         assert.match(artifact, /VIBE_FOUNDRY_PREVIEW_BASE/);
+        const manifest = JSON.parse((await cache.readFile(result.actionDigest, "preview-manifest.json")).toString("utf8"));
+        assert.deepEqual(manifest, { componentId: fixture.registry.previews[0].id, actionDigest: result.actionDigest });
       } finally {
         cache.close();
       }
@@ -1281,7 +1338,7 @@ describe("component preview runtime", () => {
     }
   });
 
-  it("detects Vue slots and injects visible preview slot content", async () => {
+  it("preserves source fallback slots without inventing preview content when no usage scenario exists", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-slots-"));
     const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-library-"));
     try {
@@ -1298,7 +1355,7 @@ const props = defineProps<{ clickable?: boolean }>();
       <slot name="header" />
     </view>
     <view class="app-list-card__body">
-      <slot />
+      <slot>源组件默认内容</slot>
     </view>
     <view v-if="$slots.footer" class="app-list-card__footer">
       <slot name="footer" />
@@ -1317,7 +1374,7 @@ const props = defineProps<{ clickable?: boolean }>();
             kind: "component",
           },
         ],
-        { generatedAt: "2026-07-08T00:00:00.000Z" },
+        { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
       );
       const selected = registry.previews[0];
       const previewRoot = join(
@@ -1336,11 +1393,10 @@ const props = defineProps<{ clickable?: boolean }>();
         "utf8",
       );
 
-      assert.match(previewSource, /<template #header>/);
-      assert.match(previewSource, /预览卡片/);
-      assert.match(previewSource, /候选人：王小明/);
-      assert.match(previewSource, /<template #footer>/);
-      assert.doesNotMatch(previewSource, /<Component v-bind="props" \/>/);
+      assert.match(previewSource, /<Component v-bind="props" \/>/);
+      assert.doesNotMatch(previewSource, /<template #|预览卡片|候选人：王小明|更新时间|vibe-preview-slot/);
+      const componentSource = await readFile(join(projectRoot, "src", "components", "common", "AppListCard.vue"), "utf8");
+      assert.match(componentSource, /<slot>源组件默认内容<\/slot>/);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       await rm(libraryRoot, { recursive: true, force: true });
@@ -1358,7 +1414,7 @@ const props = defineProps<{ clickable?: boolean }>();
           kind: "component",
         },
       ],
-      { generatedAt: "2026-07-08T00:00:00.000Z" },
+      { projectRoot: join(tmpdir(), "preview-runtime-fixture"), generatedAt: "2026-07-08T00:00:00.000Z" },
     );
     const preview = registry.previews[0];
 
@@ -1367,31 +1423,86 @@ const props = defineProps<{ clickable?: boolean }>();
     assert.equal(resolveComponentPreview(registry, "src/components/shared/ShareJobPanel.jsx").id, preview.id);
   });
 
-  it("builds a Windows-safe command for creating a static preview bundle without starting another web server", async () => {
-    const runtime = await import("../../dist/preview/component-preview-runtime.js");
+  it("writes only the selected Vue preview without reading unselected components", async () => {
+    const fixture = await createActionBuildFixture();
+    try {
+      await writeFile(join(fixture.projectRoot, "src", "Selected.vue"), "<template><slot /></template>");
+      await mkdir(join(fixture.projectRoot, "src", "Unselected.vue"));
+      const registry = buildComponentPreviewRegistry([
+        { name: "Selected", filePath: "src/Selected.vue", exportMode: "default" },
+        { name: "Unselected", filePath: "src/Unselected.vue", exportMode: "default" },
+      ], { projectRoot: fixture.projectRoot, runtimeContext: fixture.registry.runtimeContext });
+      await writeComponentPreviewRuntime(fixture.projectRoot, registry, {
+        previewId: registry.previews[0].id,
+        previewRoot: join(fixture.assetDir, "selected runtime"),
+      });
+      await access(join(fixture.assetDir, "selected runtime", "src", "previews", `${registry.previews[0].id}.vue`));
+      await assert.rejects(access(join(fixture.assetDir, "selected runtime", "src", "previews", `${registry.previews[1].id}.vue`)), { code: "ENOENT" });
+    } finally {
+      await rm(fixture.projectRoot, { recursive: true, force: true });
+      await rm(fixture.assetDir, { recursive: true, force: true });
+    }
+  });
 
-    assert.equal(typeof runtime.createPreviewBuildProcessSpec, "function");
-    assert.deepEqual(
-      runtime.createPreviewBuildProcessSpec("..\\component-preview-static\\button-ab12cd", { platform: "win32" }),
-      {
-        command: "cmd.exe",
-        args: [
-          "/d",
-          "/c",
-          "npx --yes vite@5.4.21 build --outDir ..\\component-preview-static\\button-ab12cd --emptyOutDir",
-        ],
-      },
-    );
-    assert.deepEqual(
-      runtime.createPreviewBuildProcessSpec("..\\component-preview-static\\user-panel-ef34gh", { platform: "win32", runtime: "vite-vue" }),
-      {
-        command: "cmd.exe",
-        args: [
-          "/d",
-          "/c",
-          "npx --yes --package vite@5.4.21 --package @vitejs/plugin-vue@5.2.4 --package sass-embedded@1.89.2 vite build --outDir ..\\component-preview-static\\user-panel-ef34gh --emptyOutDir",
-        ],
-      },
-    );
+  it("uses the installed Vite CLI through Node without a shell or package download", () => {
+    const require = createRequire(import.meta.url);
+    const viteCliPath = join(dirname(require.resolve("vite/package.json")), "bin", "vite.js");
+    const outDir = "..\\component preview static\\button ab12cd";
+    assert.deepEqual(createPreviewBuildProcessSpec(outDir), {
+      command: process.execPath,
+      args: [viteCliPath, "build", "--outDir", outDir, "--emptyOutDir"],
+    });
+  });
+
+  it("builds a static page with the local toolchain and generated Vue config in a separate runtime directory", async () => {
+    const outputRoot = join(process.cwd(), "output");
+    await mkdir(outputRoot, { recursive: true });
+    const root = await mkdtemp(join(outputRoot, "vibe preview local tools "));
+    try {
+      await writeJson(join(root, "package.json"), { type: "module" });
+      const registry = buildComponentPreviewRegistry([], { projectRoot: root });
+      const files = buildPreviewRuntimeFiles(registry, { runtime: "vite-vue", projectRootRelativePath: "." });
+      await writeFile(join(root, "vite.config.js"), files["vite.config.js"]);
+      await writeFile(join(root, "index.html"), '<script type="module" src="./entry.js"></script>');
+      await writeFile(join(root, "entry.js"), 'document.body.textContent = "Local toolchain preview";');
+      const spec = createPreviewBuildProcessSpec("output with spaces");
+      const result = spawnSync(spec.command, spec.args, { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const html = await readFile(join(root, "output with spaces", "index.html"), "utf8");
+      assert.match(html, /assets\/index-/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("transpiles React TSX with the automatic runtime even when the source project preserves JSX", async () => {
+    const outputRoot = join(process.cwd(), "output");
+    await mkdir(outputRoot, { recursive: true });
+    const root = await mkdtemp(join(outputRoot, "vibe preview tsx "));
+    try {
+      await mkdir(join(root, "src"));
+      await writeJson(join(root, "package.json"), { type: "module" });
+      await writeJson(join(root, "tsconfig.json"), { compilerOptions: { jsx: "preserve" } });
+      const registry = buildComponentPreviewRegistry([], { projectRoot: root });
+      const files = buildPreviewRuntimeFiles(registry, { projectRootRelativePath: "." });
+      await writeFile(join(root, "vite.runtime.config.js"), files["vite.config.js"]);
+      await writeFile(join(root, "vite.config.js"), [
+        'import config from "./vite.runtime.config.js";',
+        // This test verifies source transformation; the parent application supplies React at runtime.
+        'export default { ...config, build: { rollupOptions: { external: ["react/jsx-runtime"] } } };',
+      ].join("\n"));
+      await writeFile(join(root, "index.html"), '<script type="module" src="./src/entry.tsx"></script>');
+      await writeFile(join(root, "src", "entry.tsx"), 'const label: string = "Continue"; window.preview = <button>{label}</button>;');
+      const spec = createPreviewBuildProcessSpec("dist");
+      const result = spawnSync(spec.command, spec.args, { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const html = await readFile(join(root, "dist", "index.html"), "utf8");
+      const scriptPath = html.match(/src="\/([^\"]+\.js)"/)[1];
+      const script = await readFile(join(root, "dist", scriptPath), "utf8");
+      assert.match(script, /react\/jsx-runtime/);
+      assert.doesNotMatch(script, /React\.createElement|<button>/);
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
 });

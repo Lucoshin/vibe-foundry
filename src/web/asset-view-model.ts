@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { previewFailureMessage, previewRuntimeIssue } from "../preview/preview-dependencies.js";
 import {
   assetPackageDirectoryFor,
   resolveAssetLibraryRoot,
@@ -86,9 +88,8 @@ function interactionPreviewOf(category, asset) {
   return {
     title: "组件交互预览",
     visualCue: asset.name ?? "Component",
-    hover: "悬停时抬升卡片并强调边框。",
+    hover: "悬停时强调边框，不自动打开预览。",
     focus: "聚焦时显示清晰描边，便于键盘浏览。",
-    motion: "预览光标会循环触发一次轻量点击动效。",
     reuseCue: "适合先作为复用组件候选，再检查 props、状态和业务耦合。",
   };
 }
@@ -110,7 +111,7 @@ function componentPreviewOf(category, asset, previewRegistry, runtimeStates) {
   }
   const source = normalizePath(sourceOf(asset));
   const preview = (previewRegistry.previews ?? []).find((candidate) =>
-    normalizePath(candidate.componentPath) === source || candidate.componentName === asset.name,
+    normalizePath(candidate.componentPath) === source,
   );
   if (!preview) {
     return null;
@@ -118,12 +119,19 @@ function componentPreviewOf(category, asset, previewRegistry, runtimeStates) {
   const previewUrl = preview.browserUrl && preview.browserUrl.startsWith("/component-preview/")
     ? preview.browserUrl
     : `/component-preview/${preview.id}/`;
-  const runtimeState = runtimeStates.get(preview.actionDigest);
+  const runtimeState = runtimeStates.get(preview.actionDigest || preview.id);
   const status = runtimeState?.status ?? preview.status;
   const buildable = runtimeState?.buildable ?? preview.buildable ?? status === "ready";
   const blockers = runtimeState?.blockers ?? preview.blockers ?? [];
   const limitations = runtimeState?.limitations ?? preview.limitations ?? [];
+  const scenario = preview.previewScenario;
+  const parent = scenario?.unresolvedProps?.length ? (previewRegistry.previews ?? []).find(candidate =>
+    candidate.id !== preview.id && normalizePath(candidate.componentPath) === normalizePath(scenario.sourceFile ?? "")
+    && candidate.buildable !== false && candidate.status !== "blocked",
+  ) : null;
   return {
+    ...(scenario ? { scenario } : {}),
+    ...(parent ? { contextPreview: { id: parent.id, name: parent.componentName, previewUrl: `/component-preview/${parent.id}/`, actionDigest: parent.actionDigest } } : {}),
     id: preview.id,
     ...(preview.actionDigest ? { actionDigest: preview.actionDigest } : {}),
     status,
@@ -140,8 +148,12 @@ function componentPreviewOf(category, asset, previewRegistry, runtimeStates) {
 function toAsset(category, asset, kind, project, previewRegistry, runtimeStates, projectRoot, assetPackageDir) {
   const source = sourceOf(asset);
   const language = languageOf(source);
+  const projectIdentity = process.platform === "win32" ? projectRoot.toLowerCase() : projectRoot;
+  const identity = createHash("sha256")
+    .update(JSON.stringify([projectIdentity, category, normalizePath(source), asset.name ?? asset.source]))
+    .digest("hex");
   return {
-    id: `${category}:${asset.name ?? asset.source}`,
+    id: `${category}:${identity}`,
     category,
     kind,
     name: asset.name ?? asset.source,
@@ -158,18 +170,27 @@ function toAsset(category, asset, kind, project, previewRegistry, runtimeStates,
   };
 }
 
-async function previewRuntimeStates(assetDir, previewRegistry) {
+async function previewRuntimeStates(assetDir, previewRegistry, projectRoot) {
+  const states = new Map();
+  const issuesByRuntime = new Map();
+  for (const preview of previewRegistry.previews ?? []) {
+    const runtime = preview.runtime ?? previewRegistry.runtime;
+    if (!issuesByRuntime.has(runtime)) issuesByRuntime.set(runtime, previewRuntimeIssue(projectRoot, runtime));
+    const issue = issuesByRuntime.get(runtime);
+    if (issue) states.set(preview.actionDigest || preview.id, {
+      status: "blocked", buildable: false, blockers: [issue.message], limitations: [],
+    });
+  }
   try {
     await access(join(assetDir, "preview-state.db"));
   } catch (error) {
-    if (error?.code === "ENOENT") return new Map();
+    if (error?.code === "ENOENT") return states;
     throw error;
   }
-  const states = new Map();
   const cache = openPreviewBuildCache(assetDir);
   try {
     for (const preview of previewRegistry.previews ?? []) {
-      if (!preview.actionDigest) continue;
+      if (!preview.actionDigest || states.has(preview.actionDigest)) continue;
       const action = cache.getAction(preview.actionDigest);
       if (!action) continue;
       if (action.state === "succeeded") {
@@ -191,7 +212,7 @@ async function previewRuntimeStates(assetDir, previewRegistry) {
         states.set(preview.actionDigest, {
           status: "blocked",
           buildable: false,
-          blockers: [`Cached preview build failure: ${action.failureCode}`],
+          blockers: [previewFailureMessage(action.failureCode)],
           limitations: [],
         });
         continue;
@@ -255,7 +276,7 @@ export async function loadAssetViewModel(projectRoot, options = {}) {
       readText(assetDir, "reuse-report.md"),
       readText(assetDir, "agent-rules.md"),
     ]);
-    const runtimeStates = await previewRuntimeStates(assetDir, componentPreviews);
+    const runtimeStates = await previewRuntimeStates(assetDir, componentPreviews, resolvedProjectRoot);
     const sourceProject = manifest.sourceProject ?? "unknown-project";
     const assets = [
       ...(componentCatalog.components ?? []).map((asset) =>
@@ -310,21 +331,39 @@ export async function loadAssetViewModel(projectRoot, options = {}) {
 
 export async function loadAssetLibraryViewModel(libraryRoot) {
   const resolvedLibraryRoot = resolveAssetLibraryRoot(libraryRoot);
+  let index;
   try {
-    const index = JSON.parse(await readFile(join(resolvedLibraryRoot, "index.json"), "utf8"));
-    const models = await Promise.all(index.projects.map((project) => loadAssetViewModel(project.projectRoot, { assetDir: project.assetPackageDir })));
-    const available = models.filter((model) => !model.isError);
-    return {
-      isError: available.length === 0,
-      message: available.length === 0 ? "集中资产库为空。请先运行 node dist/cli.js distill <project-root>。" : "",
-      project: { sourceProject: "VibeFoundry Library", generatedAt: "", framework: "multiple" },
-      summary: { totalAssets: available.reduce((sum, model) => sum + model.summary.totalAssets, 0), generatedAt: "", assetCounts: {} },
-      categories: assetCategories,
-      assets: available.flatMap((model) => model.assets),
-      reports: { reuse: "", rules: "" },
-    };
+    index = JSON.parse(await readFile(join(resolvedLibraryRoot, "index.json"), "utf8"));
   } catch (error) {
-    if (error?.code === "ENOENT") return { isError: true, message: "集中资产库为空。请先运行 node dist/cli.js distill <project-root>。", project: null, summary: { totalAssets: 0, generatedAt: "", assetCounts: {} }, categories: assetCategories, assets: [], reports: { reuse: "", rules: "" } };
-    throw error;
+    if (error?.code !== "ENOENT") throw error;
+    index = { projects: [] };
   }
+  const models = await Promise.all(index.projects.map((project) => loadAssetViewModel(project.projectRoot, { assetDir: project.assetPackageDir })));
+  const available = models.filter((model) => !model.isError);
+  const assets = available.flatMap((model) => model.assets);
+  const previewIds = new Set();
+  const collision = assets.find((asset) => {
+    const id = asset.componentPreview?.id;
+    if (!id) return false;
+    if (previewIds.has(id)) return true;
+    previewIds.add(id);
+    return false;
+  });
+  const message = collision
+    ? `Component preview ID collision: ${collision.componentPreview.id}. Run node dist/cli.js distill <project-root> again for the affected projects.`
+      : models.length > 0 && available.length === 0 ? "已登记的资产包无法读取。请检查资产目录，或重新炼化对应项目。" : "";
+  const visibleAssets = collision ? [] : assets;
+  const assetCounts = Object.fromEntries(Object.entries({
+    components: 'components', services: 'services', businessPatterns: 'business',
+    tokens: 'tokens', conceptAssets: 'product', metaphorPacks: 'metaphors',
+  }).map(([key, category]) => [key, visibleAssets.filter(asset => asset.category === category).length]));
+  return {
+    isError: Boolean(message),
+    message,
+    project: { sourceProject: "VibeFoundry Library", generatedAt: "", framework: "multiple" },
+    summary: { totalAssets: visibleAssets.length, generatedAt: "", assetCounts },
+    categories: assetCategories,
+    assets: visibleAssets,
+    reports: { reuse: "", rules: "" },
+  };
 }

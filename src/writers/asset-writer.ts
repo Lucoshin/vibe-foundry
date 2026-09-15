@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, realpath, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { writeComponentPreviewRuntime } from "../preview/component-preview-runtime.js";
 import { openPreviewBuildCache } from "../preview/preview-build-cache.js";
 import { slugifyMetaphorSource } from "../schema/metaphor-pack.js";
+import { writeComponentPrompts } from "../library/component-prompts.js";
 import { buildAgentRulesMarkdown } from "./agent-rules-writer.js";
 import { buildReuseReportMarkdown } from "./report-writer.js";
 
@@ -46,14 +47,39 @@ function businessPatternsMarkdown(businessPatterns) {
   return lines.join("");
 }
 
+export async function validateMetaphorOutput(outputDir, metaphorPacks) {
+  const metaphorFiles = new Map();
+  for (const pack of metaphorPacks) {
+    const filename = `${slugifyMetaphorSource(pack.source)}.json`;
+    if (metaphorFiles.has(filename)) {
+      throw new Error(`Metaphor filename collision for ${filename}: ${metaphorFiles.get(filename).source} and ${pack.source}`);
+    }
+    metaphorFiles.set(filename, pack);
+  }
+  try {
+    const directory = await realpath(join(outputDir, "metaphor-packs"));
+    if (directory !== join(await realpath(outputDir), "metaphor-packs")) {
+      throw new Error("Metaphor output directory must stay within its asset package.");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return metaphorFiles;
+}
+
 export async function writeAssetPackage(projectRoot, assetPackage, options = {}) {
   if (!options.outputDir) {
     throw new Error("writeAssetPackage requires options.outputDir");
   }
+  const metaphorFiles = await validateMetaphorOutput(options.outputDir, assetPackage.metaphorPacks);
   const outputDir = options.outputDir;
   await mkdir(outputDir, { recursive: true });
   const metaphorPacksDir = join(outputDir, "metaphor-packs");
   await mkdir(metaphorPacksDir, { recursive: true });
+  const resolvedPacksDir = await realpath(metaphorPacksDir);
+  if (resolvedPacksDir !== join(await realpath(outputDir), "metaphor-packs")) {
+    throw new Error("Metaphor output directory must stay within its asset package.");
+  }
 
   await writeFile(
     join(outputDir, "asset-manifest.json"),
@@ -90,6 +116,7 @@ export async function writeAssetPackage(projectRoot, assetPackage, options = {})
   );
   await writeComponentPreviewRuntime(projectRoot, componentPreviewRegistry, {
     previewRoot: join(outputDir, "preview-runtime"),
+    sourceIndex: options.sourceIndex,
   });
 
   await writeFile(
@@ -138,9 +165,9 @@ export async function writeAssetPackage(projectRoot, assetPackage, options = {})
     }),
   );
 
-  for (const pack of assetPackage.metaphorPacks) {
+  for (const [filename, pack] of metaphorFiles) {
     await writeFile(
-      join(metaphorPacksDir, `${slugifyMetaphorSource(pack.source)}.json`),
+      join(metaphorPacksDir, filename),
       stableJson(pack),
     );
   }
@@ -160,6 +187,14 @@ export async function writeAssetPackage(projectRoot, assetPackage, options = {})
     previewCache.replaceActionRefs(actionRefs, generatedAt);
   } finally {
     previewCache.close();
+  }
+
+  await writeComponentPrompts(outputDir, options.componentPrompts);
+
+  for (const entry of await readdir(resolvedPacksDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".json") && !metaphorFiles.has(entry.name)) {
+      await unlink(join(resolvedPacksDir, entry.name));
+    }
   }
 
   return { outputDir };

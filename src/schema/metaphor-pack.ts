@@ -18,9 +18,13 @@ export function createMetaphorPack(options) {
 }
 
 export function slugifyMetaphorSource(source) {
-  return String(source)
+  if (typeof source !== "string" || !/[\p{L}\p{N}]/u.test(source)) {
+    throw new Error("Metaphor source must contain at least one Unicode letter or number.");
+  }
+  return source
+    .normalize("NFC")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "metaphor-pack";
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
 }

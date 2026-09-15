@@ -1,0 +1,11 @@
+{
+  "name": "@vibe-foundry/vue2-preview-toolchain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js",
+  "dependencies": {
+    "@vitejs/plugin-vue2": "2.3.4",
+    "vue": "2.7.16"
+  }
+}

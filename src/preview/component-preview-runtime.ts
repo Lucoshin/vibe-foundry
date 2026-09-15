@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +12,7 @@ import {
   previewActionDigest,
 } from "./preview-action.js";
 import { openPreviewBuildCache } from "./preview-build-cache.js";
+import { assertPreviewDependencies, installedVueVersion } from "./preview-dependencies.js";
 import {
   assetPackageDirectoryFor,
   resolveAssetLibraryRoot,
@@ -22,6 +24,7 @@ const schemaVersion = "0.1.0";
 const reactRuntime = "vite-react";
 const vueRuntime = "vite-vue";
 const mixedRuntime = "mixed-vite";
+const requireFromPreviewToolchain = createRequire(import.meta.url);
 
 function stableJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -40,14 +43,6 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "") || "component";
 }
 
-function hashText(value) {
-  let hash = 5381;
-  for (const char of String(value)) {
-    hash = (hash * 33) ^ char.charCodeAt(0);
-  }
-  return (hash >>> 0).toString(36).padStart(6, "0").slice(0, 6);
-}
-
 function fingerprint(value) {
   return createHash("sha256").update(stableJson(value)).digest("hex").slice(0, 16);
 }
@@ -59,6 +54,8 @@ function fullFingerprint(value) {
 function defaultPreviewBuilderDigest() {
   return createHash("sha256")
     .update(readFileSync(fileURLToPath(import.meta.url)))
+    .update(readFileSync(new URL("./vue26-preview-plugin.js", import.meta.url)))
+    .update(readFileSync(new URL("./preview-dependencies.js", import.meta.url)))
     .digest("hex");
 }
 
@@ -67,13 +64,15 @@ function defaultPreviewToolchain(runtime) {
     node: process.versions.node,
     vite: "5.4.21",
     plugins: runtime === vueRuntime
-      ? ["@vitejs/plugin-vue@5.2.4", "sass-embedded@1.89.2"]
+      ? ["@vitejs/plugin-vue@5.2.4", "@vitejs/plugin-vue2@2.3.4", "@vue/component-compiler-utils@3.3.0", "sass-embedded@1.89.2"]
       : [],
   };
 }
 
-function previewIdFor(component) {
-  return `${slugify(component.name)}-${hashText(component.filePath)}`;
+function previewIdFor(component, projectRoot) {
+  const resolvedRoot = resolve(projectRoot);
+  const projectIdentity = process.platform === "win32" ? resolvedRoot.toLowerCase() : resolvedRoot;
+  return `${slugify(component.name)}-${fingerprint([projectIdentity, normalizePath(component.filePath), component.name])}`;
 }
 
 function isReadyExport(component) {
@@ -100,10 +99,17 @@ function browserUrlFor(id) {
   return `/component-preview/${id}/`;
 }
 
+export function componentPreviewVersionUrl(id, actionDigest) {
+  return `${browserUrlFor(id)}${actionDigest}/`;
+}
+
 export function buildComponentPreviewRegistry(components, options = {}) {
+  if (typeof options.projectRoot !== "string" || !options.projectRoot.trim()) {
+    throw new Error("projectRoot is required to register component previews.");
+  }
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const previews = components.map((component) => {
-    const id = previewIdFor(component);
+    const id = previewIdFor(component, options.projectRoot);
     const runtime = runtimeForComponent(component);
     const blockers = [];
     if (!component.filePath) {
@@ -136,9 +142,12 @@ export function buildComponentPreviewRegistry(components, options = {}) {
       builderDigest: options.builderDigest ?? defaultPreviewBuilderDigest(),
       toolchain: options.toolchain ?? defaultPreviewToolchain(runtime),
       platform: options.platform ?? { os: process.platform, arch: process.arch },
-      buildOptions: options.buildOptions ?? {
-        runtime,
-        networkPolicy: options.runtimeContext?.networkPolicy ?? "block-external",
+      buildOptions: {
+        ...(options.buildOptions ?? {
+          runtime,
+          networkPolicy: options.runtimeContext?.networkPolicy ?? "block-external",
+        }),
+        previewBase: browserUrlFor(id),
       },
       declaredEnvironmentDigest: options.declaredEnvironmentDigest ?? fullFingerprint(
         options.runtimeContext?.environmentVariables ?? [],
@@ -232,82 +241,6 @@ function propsCodeFor(_componentName, scenario, options = {}) {
   return scenarioPropsCode(scenario, options) ?? "{}";
 }
 
-function detectVueSlotNames(sourceText) {
-  const names = new Set();
-  for (const match of String(sourceText ?? "").matchAll(/<slot\b([^>]*)>/gi)) {
-    const nameMatch = match[1].match(/\bname\s*=\s*["']([^"']+)["']/i);
-    names.add(nameMatch?.[1] || "default");
-  }
-  for (const match of String(sourceText ?? "").matchAll(/\$slots\.([A-Za-z_$][\w$-]*)/g)) {
-    names.add(match[1]);
-  }
-  const preferredOrder = ["header", "default", "footer"];
-  return [...names].sort((left, right) => {
-    const leftIndex = preferredOrder.indexOf(left);
-    const rightIndex = preferredOrder.indexOf(right);
-    if (leftIndex !== -1 || rightIndex !== -1) {
-      return (leftIndex === -1 ? preferredOrder.length : leftIndex)
-        - (rightIndex === -1 ? preferredOrder.length : rightIndex);
-    }
-    return left.localeCompare(right);
-  });
-}
-
-async function detectVueSlotsByPreview(projectRoot, previews) {
-  const slotNamesByPreview = {};
-  await Promise.all(previews.map(async (preview) => {
-    if (preview.runtime !== vueRuntime || preview.status === "blocked" || preview.buildable === false) {
-      return;
-    }
-    try {
-      const sourceText = await readFile(join(projectRoot, preview.componentPath), "utf8");
-      const slotNames = detectVueSlotNames(sourceText);
-      if (slotNames.length > 0) {
-        slotNamesByPreview[preview.id] = slotNames;
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
-    }
-  }));
-  return slotNamesByPreview;
-}
-
-function vueSlotContentFor(slotName) {
-  if (slotName === "header") {
-    return `    <template #header>
-      <view class="vibe-preview-slot-header">
-        <text>预览卡片</text>
-        <text>进行中</text>
-      </view>
-    </template>`;
-  }
-  if (slotName === "footer") {
-    return `    <template #footer>
-      <view class="vibe-preview-slot-footer">
-        <text>查看详情</text>
-      </view>
-    </template>`;
-  }
-  if (slotName === "default") {
-    return `    <view class="vibe-preview-slot-body">
-      <text>候选人：王小明</text>
-      <text>岗位：前端开发</text>
-      <text>更新时间：今天 10:30</text>
-    </view>`;
-  }
-  return `    <template #${slotName}>
-      <view class="vibe-preview-slot-body">
-        <text>${slotName}</text>
-      </view>
-    </template>`;
-}
-
-function vueSlotTemplateFor(slotNames = []) {
-  return slotNames.map((slotName) => vueSlotContentFor(slotName)).join("\n");
-}
-
 function escapeVueTemplateText(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -364,9 +297,7 @@ function vuePreviewFileFor(preview, options = {}) {
   const sourceSlotText = preview.previewScenario?.slots?.default;
   const slotTemplate = sourceSlotText
     ? `    ${escapeVueTemplateText(sourceSlotText)}`
-    : preview.previewScenario
-      ? ""
-      : vueSlotTemplateFor(options.slotNamesByPreview?.[preview.id] ?? []);
+    : "";
   const componentMarkup = slotTemplate
     ? `<Component v-bind="props">
 ${slotTemplate}
@@ -376,10 +307,11 @@ ${slotTemplate}
   ${componentMarkup}
 </template>
 
-<script setup>
+${options.vueVersion?.startsWith("2.") ? "<script>" : "<script setup>"}
 import Component from ${jsString(importPath)};
 
 const props = ${propsCodeFor(preview.componentName, preview.previewScenario)};
+${options.vueVersion?.startsWith("2.") ? "export default { components: { Component }, data() { return { props }; } };" : ""}
 </script>
 `;
 }
@@ -428,12 +360,12 @@ function triggerDemoInteraction() {
   target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
-function reportPreviewMounted(previewId) {
+function reportPreviewMounted(previewId, actionDigest) {
   if (!previewId) return;
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     const canvas = document.querySelector("[data-vibe-preview-canvas]");
     if (!canvas || canvas.querySelector(".vibe-preview-empty")) return;
-    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId), {
+    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {
       method: "POST",
     }).catch(() => {});
   }));
@@ -532,7 +464,7 @@ function App() {
   }, [activePreview?.id]);
 
   useEffect(() => {
-    if (ActiveComponent && !loadError) reportPreviewMounted(activePreview?.id);
+    if (ActiveComponent && !loadError) reportPreviewMounted(activePreview?.id, activePreview?.actionDigest);
   }, [activePreview?.id, ActiveComponent, loadError]);
 
   return (
@@ -588,6 +520,7 @@ createRoot(document.getElementById("root")).render(<App />);
 }
 
 function vueAppFileFor(readyPreviews, options = {}) {
+  const isVue2 = options.vueVersion?.startsWith("2.");
   const uniComponentExports = {
     button: "Button", checkbox: "Checkbox", "checkbox-group": "CheckboxGroup", image: "Image",
     input: "Input", label: "Label", navigator: "Navigator", picker: "Picker",
@@ -605,11 +538,17 @@ function vueAppFileFor(readyPreviews, options = {}) {
   const providers = options.runtimeContext?.providers ?? [];
   const hasPinia = providers.includes("vue-pinia");
   const hasRouter = providers.includes("vue-router-memory");
+  const hasElement = isVue2 && providers.includes("vue2-element-ui");
   const providerImports = [
     hasPinia ? 'import { createPinia } from "pinia";' : "",
-    hasRouter ? 'import { createMemoryHistory, createRouter } from "vue-router";' : "",
+    hasRouter ? (isVue2 ? 'import VueRouter from "vue-router";' : 'import { createMemoryHistory, createRouter } from "vue-router";') : "",
+    hasElement ? 'import ElementUI from "element-ui";' : "",
   ].filter(Boolean).join("\n");
-  const providerSetup = [
+  const providerSetup = isVue2 ? [
+    hasElement ? "Vue.use(ElementUI);" : "",
+    hasRouter ? 'Vue.use(VueRouter);\nconst router = new VueRouter({ mode: "abstract", routes: [] });' : "",
+    'new Vue({ ' + (hasRouter ? "router, " : "") + 'render: h => h(App) }).$mount("#root");',
+  ].filter(Boolean).join("\n") : [
     "const previewApp = createApp(App);",
     ...uniComponents.flatMap((name) => [
       `previewApp.component(${jsString(name)}, ${uniComponentExports[name]});`,
@@ -625,7 +564,7 @@ function vueAppFileFor(readyPreviews, options = {}) {
   const modules = readyPreviews
     .map((preview) => `  ${jsString(preview.id)}: () => import("./previews/${preview.id}.vue"),`)
     .join("\n");
-  return `import { createApp, h, markRaw } from "vue";
+  return `${isVue2 ? 'import Vue from "vue";' : 'import { createApp, h, markRaw } from "vue";'}
 ${uniHostImports}
 ${providerImports}
 import { previews } from "./preview-data.js";
@@ -723,12 +662,12 @@ function triggerDemoInteraction() {
   target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
-function reportPreviewMounted(previewId) {
+function reportPreviewMounted(previewId, actionDigest) {
   if (!previewId) return;
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     const canvas = document.querySelector("[data-vibe-preview-canvas]");
     if (!canvas || canvas.querySelector(".vibe-preview-empty")) return;
-    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId), {
+    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {
       method: "POST",
     }).catch(() => {});
   }));
@@ -762,7 +701,7 @@ const App = {
   updated() {
     this.$nextTick(this.fitPreview);
   },
-  beforeUnmount() {
+  ${isVue2 ? "beforeDestroy" : "beforeUnmount"}() {
     window.removeEventListener("resize", this.fitPreview);
     if (this.previewResizeObserver) {
       this.previewResizeObserver.disconnect();
@@ -787,10 +726,10 @@ const App = {
       }
       try {
         const module = await loadPreview();
-        this.ActiveComponent = markRaw(module.default);
+        this.ActiveComponent = ${isVue2 ? "Vue.extend(module.default)" : "markRaw(module.default)"};
         this.$nextTick(() => {
           this.fitPreview();
-          reportPreviewMounted(activePreview.id);
+          reportPreviewMounted(activePreview.id, activePreview.actionDigest);
         });
       } catch (error) {
         this.loadError = error instanceof Error ? error.message : String(error);
@@ -821,16 +760,14 @@ const App = {
     },
     triggerDemoInteraction,
   },
-  render() {
+  render(${isVue2 ? "h" : ""}) {
     const activePreview = this.activePreview;
     const sidebar = this.embedded ? null : h("aside", { class: "vibe-preview-sidebar" }, [
       h("strong", "Component Preview Runtime"),
       ...previews.map((preview) => h("button", {
-        type: "button",
+        ${isVue2 ? 'attrs: { type: "button" },' : 'type: "button",'}
         class: preview.id === activePreview?.id ? "active" : "",
-        onClick: () => {
-          this.activeId = preview.id;
-        },
+        ${isVue2 ? 'on: { click: () => { this.activeId = preview.id; } },' : 'onClick: () => { this.activeId = preview.id; },'}
       }, [
         preview.componentName,
         h("span", preview.status),
@@ -841,7 +778,7 @@ const App = {
         h("h1", activePreview?.componentName || "No preview"),
         h("p", activePreview?.componentPath || ""),
       ]),
-      h("button", { type: "button", onClick: this.triggerDemoInteraction }, "运行交互演示"),
+      h("button", ${isVue2 ? '{ attrs: { type: "button" }, on: { click: this.triggerDemoInteraction } }' : '{ type: "button", onClick: this.triggerDemoInteraction }'}, "运行交互演示"),
     ]);
     const canvasContent = this.loadError
       ? h("div", { class: "vibe-preview-empty" }, "预览加载失败：" + this.loadError)
@@ -854,7 +791,7 @@ const App = {
       sidebar,
       h("section", { class: "vibe-preview-main" }, [
         header,
-        h("div", { ref: "previewCanvas", class: "vibe-preview-canvas", "data-vibe-preview-canvas": "" }, [canvasContent]),
+        h("div", { ref: "previewCanvas", class: "vibe-preview-canvas", ${isVue2 ? 'attrs: { "data-vibe-preview-canvas": "" }' : '"data-vibe-preview-canvas": ""'} }, [canvasContent]),
       ]),
     ]);
   },
@@ -871,14 +808,18 @@ function previewDataFileFor(registry) {
 
 function viteConfigFile(options = {}) {
   const hasVuePreviews = options.hasVuePreviews === true;
+  const isVue26 = options.vueVersion?.startsWith("2.6.");
+  const isVue27 = options.vueVersion?.startsWith("2.7.");
   const hasUnoCss = options.runtimeContext?.plugins?.includes("unocss");
   const hasUniH5 = options.hasUniH5 === true;
   const projectRootRelativePath = options.projectRootRelativePath ?? "../..";
-  const vuePluginImport = hasVuePreviews
-    ? `const vuePluginModuleUrl = pathToFileURL(requireFromViteCli.resolve("@vitejs/plugin-vue")).href;
-const { default: vue } = await import(vuePluginModuleUrl);
+  const vuePluginImport = !hasVuePreviews ? "" : isVue26
+    ? `const { vue26PreviewPlugin } = await import(${jsString(new URL("./vue26-preview-plugin.js", import.meta.url).href)});
+const vue = () => vue26PreviewPlugin(projectRoot);
 `
-    : "";
+    : `const vuePluginModuleUrl = pathToFileURL(requireFromPreviewToolchain.resolve(${jsString(isVue27 ? "@vibe-foundry/vue2-preview-toolchain" : "@vitejs/plugin-vue")})).href;
+const { default: vue } = await import(vuePluginModuleUrl);
+`;
   const vuePluginEntry = hasVuePreviews ? `    {
       name: "vibe-foundry-uni-conditional-loader",
       enforce: "pre",
@@ -891,7 +832,7 @@ const { default: vue } = await import(vuePluginModuleUrl);
         return useUniH5 ? normalizeUniComponentTags(prepared) : prepared;
       },
     },
-    vue(),
+    ${isVue27 ? 'vue({ compiler: createRequire(resolve(projectRoot, "package.json"))("vue/compiler-sfc") }),' : "vue(),"}
     {
       name: "vibe-foundry-vue-ts-script-loader",
       enforce: "post",
@@ -934,8 +875,7 @@ const { default: UnoCSS } = await import(unoCssModuleUrl);
       },
     },
 ` : "";
-  return `import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+  return `import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -945,23 +885,8 @@ const projectJsSourcePattern = /[\\/]src[\\/].*\\.js$/;
 const projectTsSourcePattern = /[\\/]src[\\/].*\\.ts$/;
 const projectVueSourcePattern = /[\\/]src[\\/].*\\.vue$/;
 const uniPreviewTargets = new Set(["H5", "WEB"]);
-const previewRuntimeDependencyNames = new Set(["vite", "@vitejs/plugin-vue"]);
 const rpxCalcMaxDeviceWidth = 960;
 const useUniH5 = ${hasUniH5};
-
-function projectPackageNames() {
-  const packageJson = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8"));
-  return Object.keys({
-    ...(packageJson.dependencies || {}),
-    ...(packageJson.devDependencies || {}),
-  });
-}
-
-const projectDependencyAliases = projectPackageNames()
-  .filter((name) => !previewRuntimeDependencyNames.has(name))
-  .filter((name) => !useUniH5 || name !== "vue")
-  .filter((name) => existsSync(resolve(projectRoot, "node_modules", name)))
-  .map((name) => ({ find: name, replacement: resolve(projectRoot, "node_modules", name) }));
 
 function uniTargetsFrom(value) {
   return String(value || "")
@@ -1058,8 +983,8 @@ function normalizeUniComponentTags(code) {
     return uniTemplateTags.has(name) ? "<" + (closing || "") + "uni-" + name : match;
   });
 }
-const requireFromViteCli = createRequire(process.argv[1]);
-const vitePackageRoot = dirname(requireFromViteCli.resolve("vite"));
+const requireFromPreviewToolchain = createRequire(${jsString(fileURLToPath(import.meta.url))});
+const vitePackageRoot = dirname(requireFromPreviewToolchain.resolve("vite/package.json"));
 const viteModuleUrl = pathToFileURL(resolve(vitePackageRoot, "dist/node/index.js")).href;
 const { transformWithEsbuild } = await import(viteModuleUrl);
 const previewBase = process.env.VIBE_FOUNDRY_PREVIEW_BASE || "/";
@@ -1070,12 +995,22 @@ export default {
   base: previewBase,
   resolve: {
     alias: [
+      { find: /^~/, replacement: resolve(projectRoot, "node_modules") + "/" },
       { find: /^@\\//, replacement: resolve(projectRoot, "src") + "/" },
-      ...(useUniH5 ? [{ find: "vue", replacement: resolve(projectRoot, "node_modules/@dcloudio/uni-h5-vue") }] : []),
-      ...projectDependencyAliases,
+      ...(useUniH5 ? [{ find: "vue", replacement: resolve(projectRoot, "node_modules/@dcloudio/uni-h5-vue") }] : ${hasVuePreviews ? '[{ find: "vue", replacement: dirname(createRequire(resolve(projectRoot, "package.json")).resolve("vue/package.json")) }]' : "[]"}),
     ],
   },
   plugins: [
+    {
+      name: "vibe-preview-project-dependencies",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (!importer || source.startsWith(".") || source.startsWith("/") || source.includes(":") || source.startsWith("\\0")) return null;
+        const normalized = importer.replaceAll("\\\\", "/");
+        if (!normalized.startsWith(previewRoot.replaceAll("\\\\", "/") + "/")) return null;
+        return this.resolve(source, resolve(projectRoot, "package.json"), { skipSelf: true });
+      },
+    },
 ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
       name: "vibe-foundry-ts-source-loader",
       enforce: "pre",
@@ -1140,11 +1075,11 @@ ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
       "__UNI_FEATURE_NAVIGATIONBAR_TRANSPARENT__": false,
     } : {}),
   },
-  esbuild: {
-    loader: "jsx",
-    include: /src\\/.*\\.(js|jsx)$/,
+${hasVuePreviews ? "" : `  esbuild: {
+    jsx: "automatic",
+    jsxImportSource: "react",
   },
-  optimizeDeps: {
+`}  optimizeDeps: {
     esbuildOptions: {
       loader: { ".js": "jsx" },
     },
@@ -1287,37 +1222,6 @@ body,
   max-width: var(--vibe-preview-available-width);
   object-fit: contain;
 }
-.vibe-preview-slot-header,
-.vibe-preview-slot-body,
-.vibe-preview-slot-footer {
-  display: grid;
-  gap: 6px;
-  color: #1d1d1f;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.vibe-preview-slot-header,
-.vibe-preview-slot-footer {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
-.vibe-preview-slot-header text:first-child {
-  font-weight: 700;
-}
-.vibe-preview-slot-header text:last-child,
-.vibe-preview-slot-footer text:last-child {
-  border-radius: 999px;
-  padding: 3px 8px;
-  background: #e8f2ff;
-  color: #0071e3;
-  font-size: 12px;
-}
-.vibe-preview-slot-body {
-  min-width: 260px;
-  border-radius: 8px;
-  background: #f5f5f7;
-  padding: 10px 12px;
-}
 .vibe-preview-empty {
   color: #6e6e73;
 }
@@ -1385,6 +1289,7 @@ export function buildPreviewRuntimeFiles(registry, options = {}) {
     "index.html": indexHtmlFile(hasVuePreviews ? "/src/App.js" : "/src/App.jsx"),
     "vite.config.js": viteConfigFile({
       hasVuePreviews,
+      vueVersion: options.vueVersion,
       projectRootRelativePath: options.projectRootRelativePath,
       runtimeContext: options.runtimeContext,
       hasUniH5,
@@ -1427,7 +1332,16 @@ async function readOptionalText(filePath) {
   }
 }
 
-async function discoverProjectStyleImports(projectRoot) {
+function sourceReaderFor(projectRoot, sourceIndex) {
+  const texts = new Map((sourceIndex?.files ?? []).map((file) => [file.filePath, file.sourceText]));
+  return (filePath) => {
+    const normalized = normalizePath(filePath);
+    if (!texts.has(normalized)) texts.set(normalized, readOptionalText(join(projectRoot, normalized)));
+    return texts.get(normalized);
+  };
+}
+
+async function discoverProjectStyleImports(projectRoot, readSource) {
   const imports = [];
   const addImport = (sourcePath) => {
     const normalizedSource = normalizePath(sourcePath);
@@ -1435,18 +1349,6 @@ async function discoverProjectStyleImports(projectRoot) {
       imports.push(normalizedSource);
     }
   };
-  const packageJsonText = await readOptionalText(join(projectRoot, "package.json"));
-  if (packageJsonText) {
-    const packageJson = JSON.parse(packageJsonText);
-    const dependencies = {
-      ...(packageJson.dependencies ?? {}),
-      ...(packageJson.devDependencies ?? {}),
-    };
-    if ("antd" in dependencies) {
-      addImport("antd/dist/antd.css");
-    }
-  }
-
   const entryFiles = [
     "src/index.js",
     "src/index.jsx",
@@ -1455,9 +1357,17 @@ async function discoverProjectStyleImports(projectRoot) {
     "src/main.jsx",
     "src/main.ts",
     "src/main.tsx",
+    "app/layout.tsx",
+    "app/layout.jsx",
+    "src/app/layout.tsx",
+    "src/app/layout.jsx",
+    "pages/_app.tsx",
+    "pages/_app.jsx",
+    "src/pages/_app.tsx",
+    "src/pages/_app.jsx",
   ];
   for (const entryFile of entryFiles) {
-    const entryText = await readOptionalText(join(projectRoot, entryFile));
+    const entryText = await readSource(entryFile);
     for (const match of entryText.matchAll(cssImportPattern)) {
       const source = match[1];
       if (source.startsWith(".")) {
@@ -1470,14 +1380,15 @@ async function discoverProjectStyleImports(projectRoot) {
   return imports;
 }
 
-export async function discoverPreviewStyleImports(projectRoot, previews) {
+export async function discoverPreviewStyleImports(projectRoot, previews, options = {}) {
+  const readSource = sourceReaderFor(projectRoot, options.sourceIndex);
   const imports = [];
   for (const preview of previews) {
     const sourceFile = preview.previewScenario?.sourceFile;
     if (!sourceFile) {
       continue;
     }
-    const sourceText = await readOptionalText(join(projectRoot, sourceFile));
+    const sourceText = await readSource(sourceFile);
     for (const match of sourceText.matchAll(cssImportPattern)) {
       const source = match[1];
       const importPath = source.startsWith(".")
@@ -1491,18 +1402,21 @@ export async function discoverPreviewStyleImports(projectRoot, previews) {
   return imports;
 }
 
-export async function discoverPreviewRuntimeContext(projectRoot) {
-  const packageJsonText = await readOptionalText(join(projectRoot, "package.json"));
+export async function discoverPreviewRuntimeContext(projectRoot, options = {}) {
+  const readSource = sourceReaderFor(projectRoot, options.sourceIndex);
+  const packageJsonText = await readSource("package.json");
   const packageJson = packageJsonText ? JSON.parse(packageJsonText) : {};
   const dependencies = {
     ...(packageJson.dependencies ?? {}),
     ...(packageJson.devDependencies ?? {}),
   };
-  const runtimeFiles = await listFiles(projectRoot, ["src"], [".js", ".jsx", ".ts", ".tsx", ".vue"]);
+  const runtimeFiles = options.sourceIndex?.files
+    ?? await listFiles(projectRoot, ["src"], [".js", ".jsx", ".ts", ".tsx", ".vue"]);
   const runtimeSources = await Promise.all(runtimeFiles.map(async (file) => ({
     filePath: file.filePath,
-    source: await readOptionalText(file.fullPath),
+    source: await readSource(file.filePath),
   })));
+  const vueVersion = installedVueVersion(projectRoot);
   const runtimeSourceText = runtimeSources.map((item) => item.source).join("\n");
   const providers = [];
   if ("react-router-dom" in dependencies && /\b(?:BrowserRouter|RouterProvider|createBrowserRouter|useRoutes)\b/.test(runtimeSourceText)) {
@@ -1514,6 +1428,10 @@ export async function discoverPreviewRuntimeContext(projectRoot) {
   if ("vue-router" in dependencies && /\bcreateRouter\s*\(|\.use\s*\(\s*router\b/.test(runtimeSourceText)) {
     providers.push("vue-router-memory");
   }
+  if (vueVersion?.startsWith("2.") && "vue-router" in dependencies && /new Router\s*\(/.test(runtimeSourceText)) {
+    if (!providers.includes("vue-router-memory")) providers.push("vue-router-memory");
+  }
+  if (vueVersion?.startsWith("2.") && "element-ui" in dependencies && /Vue\.use\s*\(\s*Element(?:UI)?\b/.test(runtimeSourceText)) providers.push("vue2-element-ui");
   const unresolved = [];
   if (
     ("redux" in dependencies || "react-redux" in dependencies || "@reduxjs/toolkit" in dependencies)
@@ -1530,30 +1448,36 @@ export async function discoverPreviewRuntimeContext(projectRoot) {
   const environmentVariables = [...runtimeSourceText.matchAll(
     /\b(?:import\.meta\.env|process\.env)\.([A-Z][A-Z0-9_]*)\b/g,
   )].map((match) => match[1]).filter((name, index, names) => names.indexOf(name) === index).sort();
-  const globalStyles = await discoverProjectStyleImports(projectRoot);
+  const globalStyles = await discoverProjectStyleImports(projectRoot, readSource);
   const plugins = "unocss" in dependencies ? ["unocss"] : [];
+  const runtimeEvidence = runtimeSources.filter((item) =>
+    /\b(?:BrowserRouter|RouterProvider|createBrowserRouter|useRoutes|createPinia|createRouter|configureStore|createStore|createI18n|I18nextProvider|initReactI18next)\b|react-redux/.test(item.source),
+  );
   const lockfileText = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]
-    .map(async (fileName) => readOptionalText(join(projectRoot, fileName)));
+    .map(async (fileName) => readSource(fileName));
   const dependencyFingerprint = fullFingerprint({
     packageJson: packageJsonText,
+    vueVersion,
     lockfiles: await Promise.all(lockfileText),
     globalStyles: await Promise.all(globalStyles.map(async (filePath) => ({
       filePath,
-      source: filePath.startsWith("src/") ? await readOptionalText(join(projectRoot, filePath)) : "",
+      source: await readSource(filePath),
     }))),
-    runtimeEvidence: runtimeSources.map((item) => item.filePath),
+    runtimeEvidence: runtimeEvidence.map((item) => ({ filePath: item.filePath, digest: fullFingerprint(item.source) })),
     providers,
     plugins,
     unresolved,
     environmentVariables,
   });
   return {
+    vueVersion,
     providers,
     globalStyles,
     plugins,
     networkPolicy: "block-external",
     unresolved,
     environmentVariables,
+    sourceFiles: runtimeEvidence.map((item) => item.filePath),
     fingerprint: dependencyFingerprint,
   };
 }
@@ -1579,20 +1503,19 @@ export async function writeComponentPreviewRuntime(projectRoot, registry, option
   const selectedPreviews = options.previewId
     ? registry.previews.filter((preview) => preview.id === options.previewId)
     : registry.previews;
-  const scenarioStyleImports = await discoverPreviewStyleImports(resolvedRoot, selectedPreviews);
+  const scenarioStyleImports = await discoverPreviewStyleImports(resolvedRoot, selectedPreviews, { sourceIndex: options.sourceIndex });
   const globalStyleImports = [...new Set([
     ...runtimeContext.globalStyles,
     ...scenarioStyleImports,
   ])];
-  const slotNamesByPreview = await detectVueSlotsByPreview(resolvedRoot, registry.previews);
   const files = buildPreviewRuntimeFiles(registry, {
     globalStyleImports,
+    vueVersion: installedVueVersion(resolvedRoot),
     runtime: options.runtime,
     previewId: options.previewId,
     projectRootRelativePath,
     runtimeImportPrefix,
     componentImportPrefix,
-    slotNamesByPreview,
     runtimeContext,
   });
   await mkdir(previewRoot, { recursive: true });
@@ -1635,34 +1558,11 @@ export async function prepareComponentPreviewRuntime(projectRoot, options = {}) 
   return { registry, selectedPreview, ...runtime };
 }
 
-export function createPreviewBuildProcessSpec(outDir, options = {}) {
-  const platform = options.platform ?? process.platform;
-  const runtime = options.runtime ?? reactRuntime;
-  const args = runtime === vueRuntime
-    ? [
-        "--yes",
-        "--package",
-        "vite@5.4.21",
-        "--package",
-        "@vitejs/plugin-vue@5.2.4",
-        "--package",
-        "sass-embedded@1.89.2",
-        "vite",
-        "build",
-        "--outDir",
-        outDir,
-        "--emptyOutDir",
-      ]
-    : ["--yes", "vite@5.4.21", "build", "--outDir", outDir, "--emptyOutDir"];
-  if (platform === "win32") {
-    return {
-      command: "cmd.exe",
-      args: ["/d", "/c", `npx ${args.join(" ")}`],
-    };
-  }
+export function createPreviewBuildProcessSpec(outDir) {
+  const vitePackageRoot = dirname(requireFromPreviewToolchain.resolve("vite/package.json"));
   return {
-    command: "npx",
-    args,
+    command: process.execPath,
+    args: [join(vitePackageRoot, "bin", "vite.js"), "build", "--outDir", outDir, "--emptyOutDir"],
   };
 }
 
@@ -1717,7 +1617,7 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
     throw new Error("Component preview action digest is missing. Run vibe-foundry distill again.");
   }
 
-  const previewUrl = browserUrlFor(preview.id);
+  const previewUrl = componentPreviewVersionUrl(preview.id, preview.actionDigest);
   const cache = openPreviewBuildCache(assetDir);
   const owner = randomUUID();
   const leaseTtlMs = options.leaseTtlMs ?? 30_000;
@@ -1778,10 +1678,7 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
     previewRoot = prepared.previewRoot;
     const outputDir = join(prepared.previewRoot, "dist");
     const buildOutDir = relative(prepared.previewRoot, outputDir);
-    const processSpec = createPreviewBuildProcessSpec(buildOutDir, {
-      platform: options.platform,
-      runtime: preview.runtime,
-    });
+    const processSpec = options.buildProcessSpec ?? createPreviewBuildProcessSpec(buildOutDir);
     const buildEnvironment = createSafeProcessEnvironment(options.hostEnvironment, {
       BROWSER: "none",
       VIBE_FOUNDRY_PREVIEW_BASE: previewUrl,
@@ -1802,6 +1699,7 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
           env: buildEnvironment,
         });
       } else {
+        if (!options.buildProcessSpec) assertPreviewDependencies(resolvedRoot, preview.runtime);
         await runPreviewBuild(processSpec, {
           cwd: prepared.previewRoot,
           env: buildEnvironment,
@@ -1810,6 +1708,10 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
     } finally {
       clearInterval(heartbeat);
     }
+    await writeFile(join(outputDir, "preview-manifest.json"), stableJson({
+      componentId: preview.id,
+      actionDigest: preview.actionDigest,
+    }));
     const committed = await cache.commitSuccess({
       actionDigest: preview.actionDigest,
       leaseOwner: owner,

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { access } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, extname, join, relative, resolve } from "node:path";
 
 import { parse as parseJavaScript } from "@babel/parser";
@@ -9,6 +11,10 @@ import { parse as parseVueSfc } from "@vue/compiler-sfc";
 import { listFiles, readTextFile } from "../utils/files.js";
 
 const sourceExtensions = [".js", ".jsx", ".ts", ".tsx", ".vue"];
+const require = createRequire(import.meta.url);
+const analyzerDigest = createHash("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex");
+const parserVersions = ["@babel/parser", "@vue/compiler-dom", "@vue/compiler-sfc"]
+  .map((name) => [name, require(`${name}/package.json`).version]);
 const vueVoidTags = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
   "image",
@@ -162,8 +168,10 @@ function parseJavaScriptSource(sourceText, filePath, options = {}) {
   const imports = [];
   const exports = [];
   const componentCalls = [];
+  const dependencies = new Set();
   walkJavaScript(ast.program, (node) => {
     if (node.type === "ImportDeclaration") {
+      dependencies.add(node.source.value);
       for (const specifier of node.specifiers) {
         imports.push({
           localName: specifier.local.name,
@@ -176,18 +184,24 @@ function parseJavaScriptSource(sourceText, filePath, options = {}) {
     } else if (node.type === "ExportDefaultDeclaration") {
       exports.push({ exportedName: "default", localName: node.declaration?.id?.name ?? "default" });
     } else if (node.type === "ExportNamedDeclaration") {
+      if (node.source) dependencies.add(node.source.value);
       if (node.declaration?.id?.name) {
         exports.push({ exportedName: node.declaration.id.name, localName: node.declaration.id.name });
       }
       for (const specifier of node.specifiers ?? []) {
-        exports.push({ exportedName: specifier.exported.name, localName: specifier.local.name });
+        exports.push({
+          exportedName: specifier.exported.name ?? specifier.exported.value,
+          localName: specifier.local?.name ?? specifier.local?.value ?? specifier.exported.name,
+        });
       }
+    } else if (node.type === "ExportAllDeclaration") {
+      dependencies.add(node.source.value);
     } else if (node.type === "JSXElement") {
       const call = jsxComponentCall(node);
       if (call) componentCalls.push(call);
     }
   });
-  return { imports, exports, componentCalls };
+  return { imports, exports, componentCalls, dependencies: [...dependencies] };
 }
 
 function vueStaticArgument(argument) {
@@ -215,7 +229,7 @@ function vueSlotInfo(children = []) {
   return { slots: text ? { default: text } : {}, unresolvedSlots };
 }
 
-function vueComponentCalls(template) {
+function vueComponentCalls(template, templateLocation) {
   if (!template.trim()) return [];
   const ast = parseVueTemplate(template, {
     comments: false,
@@ -250,8 +264,10 @@ function vueComponentCalls(template) {
           events: [...new Set(events)].sort(),
           ...slotInfo,
           sourceLocation: {
-            line: node.loc.start.line,
-            column: node.loc.start.column,
+            line: templateLocation.line + node.loc.start.line - 1,
+            column: node.loc.start.line === 1
+              ? templateLocation.column + node.loc.start.column - 1
+              : node.loc.start.column,
           },
         });
       }
@@ -266,41 +282,94 @@ function vueComponentCalls(template) {
 
 function parseVueSource(sourceText, filePath) {
   const { descriptor } = parseVueSfc(sourceText, { filename: filePath });
-  const script = descriptor.scriptSetup ?? descriptor.script;
-  const scriptIndex = script
-    ? parseJavaScriptSource(script.content, filePath, { typescript: script.lang === "ts" })
-    : { imports: [], exports: [], componentCalls: [] };
+  const scripts = [descriptor.script, descriptor.scriptSetup]
+    .filter(Boolean)
+    .map((script) => parseJavaScriptSource(script.content, filePath, { typescript: script.lang === "ts" }));
   return {
-    imports: scriptIndex.imports,
-    exports: scriptIndex.exports,
-    componentCalls: vueComponentCalls(descriptor.template?.content ?? ""),
+    imports: scripts.flatMap((script) => script.imports),
+    exports: scripts.flatMap((script) => script.exports),
+    dependencies: [...new Set(scripts.flatMap((script) => script.dependencies))],
+    componentCalls: descriptor.template
+      ? vueComponentCalls(descriptor.template.content, descriptor.template.loc.start)
+      : [],
     styles: descriptor.styles.map((style) => ({ lang: style.lang ?? "css", scoped: style.scoped })),
   };
 }
 
-async function indexFile(projectRoot, file) {
+function parseCacheKey(sourceFingerprint, filePath) {
+  return createHash("sha256").update(JSON.stringify({
+    sourceFingerprint,
+    language: extname(filePath),
+    parserVersions,
+    analyzerDigest,
+  })).digest("hex");
+}
+
+async function parseSourceSummary(sourceText, filePath, cacheKey, cacheDir, metrics) {
+  const cachePath = cacheDir ? join(cacheDir, `${cacheKey}.json`) : "";
+  if (cachePath) {
+    let cachedText;
+    try {
+      cachedText = await readFile(cachePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (cachedText !== undefined) {
+      const cached = JSON.parse(cachedText);
+      if (cached.cacheKey !== cacheKey || !cached.parsed
+        || !["imports", "exports", "componentCalls", "dependencies", "styles"].every((key) => Array.isArray(cached.parsed[key]))) {
+        throw new Error(`Invalid frontend analysis cache: ${cachePath}`);
+      }
+      metrics.reused += 1;
+      return cached.parsed;
+    }
+  }
+  const parsed = filePath.endsWith(".vue")
+    ? parseVueSource(sourceText, filePath)
+    : { ...parseJavaScriptSource(sourceText, filePath), styles: [] };
+  metrics.parsed += 1;
+  if (cachePath) {
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(cachePath, `${JSON.stringify({ cacheKey, parsed })}\n`);
+  }
+  return parsed;
+}
+
+async function indexFile(projectRoot, file, options, metrics, parsedSources) {
   const sourceText = await readTextFile(file.fullPath);
-  const parsed = file.filePath.endsWith(".vue")
-    ? parseVueSource(sourceText, file.filePath)
-    : parseJavaScriptSource(sourceText, file.filePath);
-  const imports = await Promise.all(parsed.imports.map(async (item) => ({
-    ...item,
-    resolvedFilePath: await resolveImport(projectRoot, file.filePath, item.source),
+  const sourceFingerprint = createHash("sha256").update(sourceText).digest("hex");
+  const cacheKey = parseCacheKey(sourceFingerprint, file.filePath);
+  if (!parsedSources.has(cacheKey)) {
+    parsedSources.set(cacheKey, parseSourceSummary(sourceText, file.filePath, cacheKey, options.cacheDir, metrics));
+  } else {
+    metrics.reused += 1;
+  }
+  const parsed = await parsedSources.get(cacheKey);
+  const dependencies = await Promise.all(parsed.dependencies.map(async (source) => ({
+    source,
+    resolvedFilePath: await resolveImport(projectRoot, file.filePath, source),
   })));
+  const resolvedDependencies = new Map(dependencies.map((item) => [item.source, item.resolvedFilePath]));
   return {
     filePath: file.filePath,
-    sourceFingerprint: createHash("sha256").update(sourceText).digest("hex"),
-    imports,
+    sourceText,
+    sourceFingerprint,
+    imports: parsed.imports.map((item) => ({ ...item, resolvedFilePath: resolvedDependencies.get(item.source) })),
+    dependencies,
     exports: parsed.exports,
     componentCalls: parsed.componentCalls,
     styles: parsed.styles ?? [],
   };
 }
 
-export async function buildFrontendSourceIndex(projectRoot, sourceDirs = ["src"]) {
-  const files = await listFiles(projectRoot, sourceDirs, sourceExtensions);
+export async function buildFrontendSourceIndex(projectRoot, sourceDirs = ["src"], options = {}) {
+  const discoveredFiles = await listFiles(projectRoot, sourceDirs, sourceExtensions);
+  const files = [...new Map(discoveredFiles.map((file) => [file.filePath, file])).values()];
+  const metrics = { files: files.length, parsed: 0, reused: 0 };
+  const parsedSources = new Map();
   return {
     schemaVersion: "0.1.0",
-    files: await Promise.all(files.map((file) => indexFile(projectRoot, file))),
+    files: await Promise.all(files.map((file) => indexFile(projectRoot, file, options, metrics, parsedSources))),
+    metrics,
   };
 }

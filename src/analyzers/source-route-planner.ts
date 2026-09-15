@@ -148,8 +148,8 @@ export async function planSourceRoutes(projectRoot, sourceDirs = ["src"], option
       unresolvedFiles.add(file.filePath);
     }
     if (![".js", ".jsx", ".ts", ".tsx"].includes(extname(file.filePath))) continue;
-    const sourceText = await readFile(join(projectRoot, file.filePath), "utf8");
-    const parsed = parseRouteSource(sourceText, file.filePath);
+    if (!file.dependencies.some((dependency) => ["react-router-dom", "vue-router"].includes(dependency.source))) continue;
+    const parsed = parseRouteSource(file.sourceText, file.filePath);
     routes.push(...parsed.routes);
     if (parsed.unresolved) unresolvedFiles.add(file.filePath);
   }

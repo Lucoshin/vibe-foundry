@@ -38,31 +38,38 @@ function sourceFingerprintFor(sourceText) {
   return createHash("sha256").update(sourceText).digest("hex");
 }
 
-async function dependencyFingerprintFor(projectRoot, roots, sourceIndex, knownSources = new Map()) {
-  const indexedFiles = new Map(sourceIndex.files.map((file) => [file.filePath, file]));
+function createDependencyFingerprinter(indexedFiles, readSource) {
   const fingerprints = new Map();
-  const pending = [...new Set(roots.filter(Boolean))];
-  while (pending.length > 0) {
-    const filePath = pending.pop();
-    if (fingerprints.has(filePath)) continue;
-    const indexed = indexedFiles.get(filePath);
-    const sourceText = knownSources.has(filePath)
-      ? knownSources.get(filePath)
-      : await readTextFile(join(projectRoot, filePath));
-    fingerprints.set(
-      filePath,
-      indexed?.sourceFingerprint ?? sourceFingerprintFor(sourceText),
-    );
-    for (const imported of indexed?.imports ?? []) {
-      if (imported.resolvedFilePath && !fingerprints.has(imported.resolvedFilePath)) {
-        pending.push(imported.resolvedFilePath);
+  const dependencyPaths = new Map();
+  function pathsFor(root) {
+    if (dependencyPaths.has(root)) return dependencyPaths.get(root);
+    const paths = new Set();
+    const pending = [root];
+    while (pending.length > 0) {
+      const filePath = pending.pop();
+      if (paths.has(filePath)) continue;
+      paths.add(filePath);
+      for (const dependency of indexedFiles.get(filePath)?.dependencies ?? []) {
+        if (dependency.resolvedFilePath) pending.push(dependency.resolvedFilePath);
       }
     }
+    dependencyPaths.set(root, paths);
+    return paths;
   }
-  const entries = [...fingerprints.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([filePath, fingerprint]) => ({ filePath, fingerprint }));
-  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+  return async (roots) => {
+    const paths = [...new Set(roots.filter(Boolean).flatMap((root) => [...pathsFor(root)]))]
+      .sort((left, right) => left.localeCompare(right));
+    const entries = await Promise.all(paths.map(async (filePath) => {
+      if (!fingerprints.has(filePath)) {
+        const indexed = indexedFiles.get(filePath);
+        fingerprints.set(filePath, indexed
+          ? Promise.resolve(indexed.sourceFingerprint)
+          : readSource(filePath).then(sourceFingerprintFor));
+      }
+      return { filePath, fingerprint: await fingerprints.get(filePath) };
+    }));
+    return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+  };
 }
 
 function isComponentSourceFile(filePath) {
@@ -153,28 +160,42 @@ function normalizedVueComponentName(name) {
   return String(name ?? "").replace(/-([a-z0-9])/g, (_match, character) => character.toUpperCase()).toLowerCase();
 }
 
-function scenariosForComponent(componentPath, sourceIndex) {
-  const scenarios = [];
+function buildScenarioIndex(sourceIndex) {
+  const scenariosByComponent = new Map();
   for (const usageFile of sourceIndex.files) {
+    const importsByName = new Map();
+    const localNameFor = usageFile.filePath.endsWith(".vue")
+      ? normalizedVueComponentName
+      : (name) => name;
+    for (const imported of usageFile.imports) {
+      if (!imported.resolvedFilePath) continue;
+      const name = localNameFor(imported.localName);
+      if (!importsByName.has(name)) importsByName.set(name, []);
+      importsByName.get(name).push(imported);
+    }
     for (const call of usageFile.componentCalls) {
-      const imported = usageFile.imports.find((item) =>
-        (usageFile.filePath.endsWith(".vue")
-          ? normalizedVueComponentName(item.localName) === normalizedVueComponentName(call.localName)
-          : item.localName === call.localName)
-        && item.resolvedFilePath === componentPath,
-      );
-      if (imported) scenarios.push(scenarioFromCall(componentPath, usageFile, imported, call));
+      const matchedPaths = new Set();
+      for (const imported of importsByName.get(localNameFor(call.localName)) ?? []) {
+        const componentPath = imported.resolvedFilePath;
+        if (matchedPaths.has(componentPath)) continue;
+        matchedPaths.add(componentPath);
+        if (!scenariosByComponent.has(componentPath)) scenariosByComponent.set(componentPath, []);
+        scenariosByComponent.get(componentPath).push(scenarioFromCall(componentPath, usageFile, imported, call));
+      }
     }
   }
-  return scenarios.sort((left, right) => {
-    if (left.evidence.sourceAuthoredStory !== right.evidence.sourceAuthoredStory) {
-      return left.evidence.sourceAuthoredStory ? -1 : 1;
-    }
-    if (left.completeness !== right.completeness) return right.completeness - left.completeness;
-    return `${left.sourceFile}:${left.sourceLocation.line}`.localeCompare(
-      `${right.sourceFile}:${right.sourceLocation.line}`,
-    );
-  });
+  for (const scenarios of scenariosByComponent.values()) {
+    scenarios.sort((left, right) => {
+      if (left.evidence.sourceAuthoredStory !== right.evidence.sourceAuthoredStory) {
+        return left.evidence.sourceAuthoredStory ? -1 : 1;
+      }
+      if (left.completeness !== right.completeness) return right.completeness - left.completeness;
+      return `${left.sourceFile}:${left.sourceLocation.line}`.localeCompare(
+        `${right.sourceFile}:${right.sourceLocation.line}`,
+      );
+    });
+  }
+  return scenariosByComponent;
 }
 
 function previewScenarioFrom(scenario) {
@@ -208,31 +229,37 @@ function sourceCaptureCandidatesFor(component, routePlan) {
   );
 }
 
-export async function analyzeComponents(projectRoot, componentDirs, usageDirs = []) {
+export async function analyzeComponents(projectRoot, componentDirs, usageDirs = [], options = {}) {
   const files = await listFiles(projectRoot, componentDirs, [".tsx", ".jsx", ".js", ".vue"]);
-  const sourceIndex = await buildFrontendSourceIndex(projectRoot, usageDirs);
-  sourceIndex.files = sourceIndex.files.filter((file) => !/\.(test|spec)\.[jt]sx?$/i.test(file.filePath));
-  const routePlan = await planSourceRoutes(projectRoot, usageDirs, { sourceIndex });
+  const sourceIndex = options.sourceIndex ?? await buildFrontendSourceIndex(projectRoot, usageDirs);
+  const indexedFiles = new Map(sourceIndex.files.map((file) => [file.filePath, file]));
+  const sourceTexts = new Map(sourceIndex.files.map((file) => [file.filePath, Promise.resolve(file.sourceText)]));
+  const readSource = (filePath) => {
+    if (!sourceTexts.has(filePath)) sourceTexts.set(filePath, readTextFile(join(projectRoot, filePath)));
+    return sourceTexts.get(filePath);
+  };
+  const usageIndex = {
+    ...sourceIndex,
+    files: sourceIndex.files.filter((file) => !/\.(test|spec)\.[jt]sx?$/i.test(file.filePath)),
+  };
+  const routePlan = await planSourceRoutes(projectRoot, usageDirs, { sourceIndex: usageIndex });
+  const scenariosByComponent = buildScenarioIndex(usageIndex);
+  const dependencyFingerprintFor = createDependencyFingerprinter(indexedFiles, readSource);
   const components = [];
 
   for (const file of files) {
     if (!isComponentSourceFile(file.filePath)) {
       continue;
     }
-    const sourceText = await readTextFile(file.fullPath);
+    const sourceText = await readSource(file.filePath);
     const name = componentNameFromPath(file.filePath);
     const exportContract = vueFilePattern.test(file.filePath)
       ? { exportMode: "default", exportName: "default" }
       : exportContractFor(name, sourceText);
-    const scenarios = scenariosForComponent(file.filePath, sourceIndex);
+    const scenarios = scenariosByComponent.get(file.filePath) ?? [];
     const primaryScenario = scenarios[0] ?? null;
     const previewScenario = previewScenarioFrom(primaryScenario);
-    const dependencyFingerprint = await dependencyFingerprintFor(
-      projectRoot,
-      [file.filePath, primaryScenario?.sourceFile],
-      sourceIndex,
-      new Map([[file.filePath, sourceText]]),
-    );
+    const dependencyFingerprint = await dependencyFingerprintFor([file.filePath, primaryScenario?.sourceFile]);
     const platformComponents = vueFilePattern.test(file.filePath)
       ? uniH5ComponentsFor(sourceText)
       : [];
@@ -243,7 +270,7 @@ export async function analyzeComponents(projectRoot, componentDirs, usageDirs = 
       componentType: componentTypeFor(file.filePath, name),
       ...exportContract,
       reusePotential: reusePotentialFor(sourceText),
-      sourceFingerprint: sourceFingerprintFor(sourceText),
+      sourceFingerprint: indexedFiles.get(file.filePath)?.sourceFingerprint ?? sourceFingerprintFor(sourceText),
       dependencyFingerprint,
       ...(platformComponents.length > 0 ? {
         platformRuntime: "uni-h5",

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readComponentPrompt } from "../library/component-prompts.js";
 
 import {
   assetPackageDirectoryFor,
@@ -26,6 +27,16 @@ const toolDefinitions = [
         name: { type: "string" },
       },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_component_prompt",
+    description: "Read a Chinese natural-language design prompt describing a component's layout, visual effects, and interactions by its exact project-relative filePath. Copy only prompt; sourceFiles and unresolved contain separate analysis evidence and review items.",
+    inputSchema: {
+      type: "object",
+      properties: { filePath: { type: "string", minLength: 1 } },
+      required: ["filePath"],
       additionalProperties: false,
     },
   },
@@ -250,6 +261,25 @@ export async function callVibeFoundryTool(projectRoot, toolName, args = {}, opti
           component: findByName(assetPackage.components, args.name) ?? null,
         }),
       );
+
+    case "get_component_prompt":
+      if (typeof args.filePath !== "string" || !args.filePath.trim()) {
+        return textResult({ message: "filePath is required to read a component prompt." }, { isError: true });
+      }
+      return withPackage(async (assetPackage) => {
+        const filePath = args.filePath.replaceAll("\\", "/");
+        const matches = assetPackage.components.filter((component) => component.filePath?.replaceAll("\\", "/") === filePath);
+        if (matches.length !== 1) {
+          return textResult({ message: matches.length === 0
+            ? `Component not found for filePath: ${filePath}`
+            : `Ambiguous component filePath: ${filePath}. Run node dist/cli.js distill <project-root> again.` }, { isError: true });
+        }
+        try {
+          return textResult(await readComponentPrompt(assetPackage.assetDir, matches[0].filePath));
+        } catch (error) {
+          return textResult({ message: error instanceof Error ? error.message : String(error) }, { isError: true });
+        }
+      });
 
     case "get_service":
       return withPackage((assetPackage) =>

@@ -183,7 +183,10 @@ describe("open-source release configuration", () => {
       assert.match(text, /同源[^\n]{0,120}父窗口[^\n]{0,120}(?:其他|其余) API/u, path);
       assert.match(text, /networkPolicy[^\n]{0,120}不是[^\n]{0,40}安全沙箱/u, path);
     }
-    assert.match(releaseChecklist, /当前状态：[^\n]*本地验证[^\n]*待[^\n]*本地提交[^\n]*远端/u);
+    assert.match(releaseChecklist, /首个版本只发布 GitHub 源码，不发布 npm 包/u);
+    assert.match(releaseChecklist, /仓库所有者明确确认后，才创建公开仓库并推送/u);
+    assert.match(releaseChecklist, /^当前状态：\S[^\n]+/mu);
+    assert.match(releaseChecklist, /node scripts\/verify-mvp\.mjs/u);
     assert.match(docsIndex, /open-source-release-checklist\.md/);
     assert.doesNotMatch(`${readme}\n${docsIndex}`, /[A-Z]:\\(?:Users|VibeFoundry)\\/i);
   });

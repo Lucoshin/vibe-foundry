@@ -70,11 +70,11 @@ function emotionalToneFrom(text) {
   if (containsAny(text, ["craft", "forge", "precision"])) {
     tones.push("crafted");
   }
-  return tones.length > 0 ? tones : ["contextual"];
+  return tones;
 }
 
 function archetypesFrom(metaphors) {
-  const archetypes = new Set(["guide"]);
+  const archetypes = new Set(metaphors.length > 0 ? ["guide"] : []);
   if (metaphors.some((metaphor) => metaphor.name === "forge")) {
     archetypes.add("craftsperson");
   }
@@ -97,26 +97,20 @@ function namingSystemFrom(metaphors) {
 }
 
 export function distillMetaphorPack(options) {
-  const matchedMetaphors = metaphorSignals
-    .filter((signal) => containsAny(options.text, signal.keywords))
-    .map((signal) => ({
-      name: signal.name,
-      meaning: signal.meaning,
-    }));
-  const fallbackMetaphors =
-    matchedMetaphors.length > 0
-      ? matchedMetaphors
-      : [{ name: "lens", meaning: "A perspective for interpreting product design choices." }];
   const matchedSignals = metaphorSignals.filter((signal) =>
-    fallbackMetaphors.some((metaphor) => metaphor.name === signal.name),
+    containsAny(options.text, signal.keywords),
   );
+  const matchedMetaphors = matchedSignals.map((signal) => ({
+    name: signal.name,
+    meaning: signal.meaning,
+  }));
 
   return createMetaphorPack({
     source: options.source,
     sourceType: options.sourceType,
-    coreMetaphors: fallbackMetaphors,
-    archetypes: archetypesFrom(fallbackMetaphors),
-    namingSystem: namingSystemFrom(fallbackMetaphors),
+    coreMetaphors: matchedMetaphors,
+    archetypes: archetypesFrom(matchedMetaphors),
+    namingSystem: namingSystemFrom(matchedMetaphors),
     visualMotifs: [...new Set(matchedSignals.flatMap((signal) => signal.visualMotifs))],
     interactionIdeas: [...new Set(matchedSignals.flatMap((signal) => signal.interactionIdeas))],
     emotionalTone: emotionalToneFrom(options.text),

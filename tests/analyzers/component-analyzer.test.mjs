@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { analyzeComponents } from "../../dist/analyzers/component-analyzer.js";
+import { buildFrontendSourceIndex } from "../../dist/analyzers/frontend-source-index.js";
 
 const fixtureRoots = [];
 
@@ -259,6 +260,43 @@ describe("analyzeComponents", () => {
     assert.match(firstButton.dependencyFingerprint, /^[a-f0-9]{64}$/);
     assert.equal(firstButton.sourceFingerprint, secondButton.sourceFingerprint);
     assert.notEqual(firstButton.dependencyFingerprint, secondButton.dependencyFingerprint);
+  });
+
+  it("uses the supplied source snapshot without mutating or rereading indexed source", async () => {
+    const root = await createComponentFixture();
+    const sourceIndex = await buildFrontendSourceIndex(root, ["src"]);
+    const before = structuredClone(sourceIndex);
+    const indexedButton = sourceIndex.files.find((file) => file.filePath === "src/components/Button.tsx");
+    await writeFile(join(root, "src", "components", "Button.tsx"), "export function Button() { return <div>Changed on disk</div>; }");
+    await writeFile(join(root, "src", "pages", "Dashboard.tsx"), "export default () => <main>No old usage</main>;");
+
+    const components = await analyzeComponents(root, ["src/components"], ["src"], { sourceIndex });
+    const button = components.find((component) => component.name === "Button");
+
+    assert.equal(button.sourceFingerprint, indexedButton.sourceFingerprint);
+    assert.equal(button.previewScenario.props.label, "提交申请");
+    assert.deepEqual(sourceIndex, before);
+  });
+
+  it("includes side-effect styles and re-exported files in dependency fingerprints", async () => {
+    const root = await createComponentFixture();
+    await mkdir(join(root, "src", "lib"));
+    await writeFile(join(root, "src", "components", "Button.tsx"), "import './theme.css'; import { label } from '../lib/barrel'; export function Button() { return <button>{label}</button>; }");
+    await writeFile(join(root, "src", "components", "theme.css"), "button { color: red; }");
+    await writeFile(join(root, "src", "lib", "barrel.ts"), "export { label } from './label';");
+    await writeFile(join(root, "src", "lib", "label.ts"), "export const label = '保存';");
+
+    const analyzeButton = async () => (await analyzeComponents(root, ["src/components"], ["src"]))
+      .find((component) => component.name === "Button");
+    const first = await analyzeButton();
+    await writeFile(join(root, "src", "components", "theme.css"), "button { color: blue; }");
+    const styled = await analyzeButton();
+    await writeFile(join(root, "src", "lib", "label.ts"), "export const label = '提交';");
+    const relabelled = await analyzeButton();
+
+    assert.equal(first.sourceFingerprint, relabelled.sourceFingerprint);
+    assert.notEqual(first.dependencyFingerprint, styled.dependencyFingerprint);
+    assert.notEqual(styled.dependencyFingerprint, relabelled.dependencyFingerprint);
   });
 
   it("links a real component usage to a statically proven public route and locator", async () => {

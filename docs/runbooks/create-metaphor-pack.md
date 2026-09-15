@@ -3,7 +3,7 @@ project: VibeFoundry
 category: runbook
 source_path: docs/runbooks/create-metaphor-pack.md
 status: active
-last_updated: 2026-09-01
+last_updated: 2026-09-08
 ---
 
 # 创建 metaphor pack
@@ -65,6 +65,10 @@ node dist/cli.js distill .
 
 `<asset-package-dir>` 是 `distill` 打印的集中资产包目录；集中资产库优先使用 `VIBE_FOUNDRY_LIBRARY_ROOT`，未设置时使用 `<user-home>/.vibe-foundry/library`。
 
+来源名称保留 Unicode 字母和数字，例如 `山海经.md` 输出 `metaphor-packs/山海经.json`；既有 `memory-palace.json` 命名不变。名称为空、只有标点，或不同来源归一化为同一个文件名时，命令在写入资产包之前报错。出现冲突时请为来源文件设置不同名称后重炼。
+
+重炼成功后，生成目录 `metaphor-packs/` 直属、已不属于本批输出的 JSON 会被清理；其他扩展名、子目录和源材料保留。该目录用于生成产物，自有材料应放在输入目录。
+
 ## 4. 输出字段
 
 每个 metaphor pack 包含：
@@ -80,6 +84,8 @@ node dist/cli.js distill .
 - `productApplications`
 - `sourceReferences`
 - `copyrightNotes`
+
+当前提取器使用有限的英文关键词规则。未命中时，核心隐喻及其衍生建议为空数组，仍保留来源和版权说明；未识别到情绪词时 `emotionalTone` 也为空。空数组表示现有规则未识别到结果，不表示材料没有价值。命中后的命名、视觉和交互内容是规则建议，使用前应回查材料。
 
 ## 5. 验证
 

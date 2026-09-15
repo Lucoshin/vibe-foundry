@@ -213,6 +213,8 @@ MVP 不实现完整 Metaphor Distiller，但 schema 必须预留。
 
 ## 8. 当前结论
 
+2026-09-08 书籍增量：新增独立的 `book-knowledge` 资产，使用 0.2.0 协议表达世界观、人物角色、设定、概念、隐喻和有向关系，属性与关系共同保留证据及原文明示/解读标签。具体字段以[书籍知识资产计划](2026-09-08-book-knowledge-assets.md)和 `src/schema/book-knowledge.ts` 为准，不把书籍伪装成工程项目或旧 metaphor-pack。以下保留起步阶段结论。
+
 现在不需要推翻原计划，但要修正范围表述：
 
 - 不再说 VibeFoundry 只是前端设计系统工具。

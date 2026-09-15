@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { planSourceRoutes } from "../../dist/analyzers/source-route-planner.js";
+import { buildFrontendSourceIndex } from "../../dist/analyzers/frontend-source-index.js";
 
 const roots = [];
 
@@ -85,5 +86,38 @@ describe("planSourceRoutes", () => {
     const plan = await planSourceRoutes(root, ["src"]);
 
     assert.deepEqual(plan, { routes: [], unresolved: [] });
+  });
+
+  it("plans router routes from the shared source snapshot", async () => {
+    const root = await createProject({
+      "src/routes.tsx": "import { Route } from 'react-router-dom'; export const route = <Route path='/original' />;",
+    });
+    const sourceIndex = await buildFrontendSourceIndex(root, ["src"]);
+    await writeFile(join(root, "src", "routes.tsx"), "import { Route } from 'react-router-dom'; export const route = <Route path='/changed' />;");
+
+    const plan = await planSourceRoutes(root, ["src"], { sourceIndex });
+
+    assert.deepEqual(plan.routes.map((route) => route.route), ["/original"]);
+  });
+
+  it("does not read or parse files without router imports", async () => {
+    const root = await createProject({});
+    const sourceIndex = {
+      files: [{ filePath: "src/not-a-router.ts", sourceText: "not parsed @", imports: [], dependencies: [] }],
+    };
+
+    const plan = await planSourceRoutes(root, ["src"], { sourceIndex });
+
+    assert.deepEqual(plan, { routes: [], unresolved: [] });
+  });
+
+  it("retains Vue router evidence from a side-effect import", async () => {
+    const root = await createProject({
+      "src/routes.ts": "import 'vue-router'; const Page = {}; export const routes = [{ path: '/public', component: Page }];",
+    });
+
+    const plan = await planSourceRoutes(root, ["src"]);
+
+    assert.deepEqual(plan.routes.map((route) => route.route), ["/public"]);
   });
 });

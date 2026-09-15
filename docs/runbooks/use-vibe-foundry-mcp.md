@@ -3,7 +3,7 @@ project: VibeFoundry
 category: runbook
 source_path: docs/runbooks/use-vibe-foundry-mcp.md
 status: active
-last_updated: 2026-09-01
+last_updated: 2026-09-08
 ---
 
 # 使用 VibeFoundry MCP
@@ -62,6 +62,7 @@ node dist/mcp/server.js --project-root .
 
 - `list_assets`
 - `get_component`
+- `get_component_prompt`
 - `get_service`
 - `search_tokens`
 - `search_business_patterns`
@@ -80,6 +81,17 @@ const result = await callVibeFoundryTool(".", "get_service", {
 
 console.log(result.structuredContent);
 ```
+
+按组件真实文件路径取得专业效果描述提示词：
+
+```js
+const result = await callVibeFoundryTool(projectRoot, "get_component_prompt", {
+  filePath: "src/components/Button.tsx",
+});
+if (!result.isError) console.log(result.structuredContent.prompt);
+```
+
+该工具只读取对应组件的 `component-prompts/<component-path-hash>.json`，同名组件使用不同文件路径准确区分。当前记录版本为 `0.2.0`：`prompt` 是按布局、视觉、动效、交互详细分项的专业中文需求，不包含源码；`sourceFiles` 为分析依据路径，`unresolved` 为待核对项。旧源码版或未生成提示词的包仅该工具要求重新炼化，其他工具仍可使用。没有实机观测时不宣称视觉一致。
 
 返回结构包含：
 

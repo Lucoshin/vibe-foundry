@@ -1,5 +1,7 @@
 # Source Runtime Fidelity Implementation Plan
 
+> **状态复核（2026-09-08）：** Task 1–3 已有协议、路由/定位与源会话实现；Task 4–9 的采集、比较、存储、CLI/Web 接入及基线尚未完成。已有 `HEAD/main`（首个提交 `0215dde`）；下文无 HEAD 的限制是计划创建时的历史状态。普通 `distill` 仍不启动源项目脚本。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 通过公开源页面的短生命周期实机采集和分层差异比较，让资产工作台能够证明组件预览与源项目实际运行效果的贴合程度。

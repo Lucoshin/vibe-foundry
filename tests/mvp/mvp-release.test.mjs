@@ -57,10 +57,11 @@ describe("MVP release artifacts", () => {
     const script = await readText("scripts/verify-mvp.mjs");
 
     assert.match(script, /run\("npm",\s*\["test"\]/);
-    assert.match(script, /run\("npm",\s*\["run",\s*"build"\]/);
+    assert.doesNotMatch(script, /run\("npm",\s*\["run",\s*"build"\]/);
     assert.match(script, /examples\/fixture-project/);
     assert.match(script, /distill/);
     assert.match(script, /search_concept_assets/);
+    assert.match(script, /get_component_prompt/);
     assert.match(script, /mkdtemp/);
     assert.match(script, /VIBE_FOUNDRY_LIBRARY_ROOT/);
     assert.match(script, /assetPackageDirectoryFor/);
