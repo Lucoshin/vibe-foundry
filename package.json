@@ -24,7 +24,7 @@
     "dev": "node dist/cli.js"
   },
   "dependencies": {
-    "@babel/parser": "^8.0.4",
+    "@babel/parser": "^8.0.5",
     "@vibe-foundry/vue2-preview-toolchain": "file:packages/vue2-preview-toolchain",
     "@vitejs/plugin-vue": "5.2.4",
     "@vue/compiler-dom": "^3.5.39",
