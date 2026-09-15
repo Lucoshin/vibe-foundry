@@ -27,3 +27,13 @@
 - 预览异步测试保留最终内容断言，将固定 25 次轮询改为最长 10 秒的有界等待，避免 CI 负载导致误报。
 - 本轮 node scripts/verify-mvp.mjs 通过：包含构建、414 项测试、隔离资产库炼化和 MCP/Plugin 验证；git diff --check 通过。
 - 保留全部产品实现与原有测试断言范围，本轮仅修复测试的平台假设和等待期限。
+
+## 剩余依赖分支合并
+
+- 合并 Babel parser 8.0.5、Vue compiler-dom/compiler-sfc 3.5.42、better-sqlite3 13.0.3 四项更新。
+- 解决旧 Vue 分支与现有预览依赖的冲突；保留 Vue 2 隔离工具链、Vite 和样式编译依赖。
+- npm 统一锁文件，移除旧 SQLite 驱动的 prebuild-install 等失效依赖，保留新版所需 node-addon-api 及安装脚本标记。
+- node scripts/verify-mvp.mjs 通过：414 项测试全部通过，构建、隔离炼化、MCP/Plugin 验收通过。git diff --check 通过。
+
+- 全新安装复核发现 better-sqlite3 13.0.3 的上游 Windows 安装问题：https://github.com/WiseLibs/better-sqlite3/issues/1516 。npm 仍触发 node-gyp；windows-latest 的 Visual Studio 18 无法被 Node 22/24 随附的 node-gyp 识别。CI Windows 执行环境固定为 windows-2022（VS 2022），保留既有必需检查名称及两个 Node 版本的完整测试。
+- 本机隔离目录 npm ci 已通过；Windows 安装当前仍需要可识别的 C++ 构建工具，未宣称新版完全免编译。

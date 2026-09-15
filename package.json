@@ -24,13 +24,13 @@
     "dev": "node dist/cli.js"
   },
   "dependencies": {
-    "@babel/parser": "^8.0.4",
+    "@babel/parser": "^8.0.5",
     "@vibe-foundry/vue2-preview-toolchain": "file:packages/vue2-preview-toolchain",
     "@vitejs/plugin-vue": "5.2.4",
-    "@vue/compiler-dom": "^3.5.39",
-    "@vue/compiler-sfc": "^3.5.39",
+    "@vue/compiler-dom": "^3.5.42",
+    "@vue/compiler-sfc": "^3.5.42",
     "@vue/component-compiler-utils": "3.3.0",
-    "better-sqlite3": "12.10.0",
+    "better-sqlite3": "13.0.3",
     "postcss": "8.5.26",
     "sass-embedded": "1.89.2",
     "vite": "5.4.21"

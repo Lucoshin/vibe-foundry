@@ -12,7 +12,8 @@ permissions:
 jobs:
   test:
     name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    runs-on: ${{ matrix.os }}
+    # Keep existing required check names; pin Windows to VS 2022 for node-gyp compatibility.
+    runs-on: ${{ matrix.os == 'windows-latest' && 'windows-2022' || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
