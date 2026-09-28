@@ -142,7 +142,7 @@ export function webpackContextPreviewPlugin(projectRoot, spriteConfig = null) {
         if (pattern.pattern !== "\\.svg$" || pattern.flags) throw new Error(`require.context 仅支持已确认规则的 SVG 匹配表达式：${filePath}`);
         const directoryPath = await realpath(resolve(dirname(filePath), directory.value));
         if (!within(await realpath(root), directoryPath)) throw new Error(`require.context 目录越出源工程：${filePath}`);
-        if (!spriteConfig || !within(resolve(root, spriteConfig.directory), directoryPath)) {
+        if (!spriteConfig || !within(resolve(await realpath(root), spriteConfig.directory), directoryPath)) {
           throw new Error(`require.context 的 SVG loader 语义尚未确认：${filePath}`);
         }
         const matcher = new RegExp(pattern.pattern, pattern.flags);
@@ -176,8 +176,8 @@ export function webpackContextPreviewPlugin(projectRoot, spriteConfig = null) {
     },
     async load(id) {
       if (!id.endsWith("?vibehub-svg-symbol")) return null;
-      const path = id.slice(0, -"?vibehub-svg-symbol".length);
-      if (!spriteConfig || !within(resolve(root, spriteConfig.directory), path)) throw new Error("SVG sprite 源路径不在已确认规则内");
+      const path = await realpath(id.slice(0, -"?vibehub-svg-symbol".length));
+      if (!spriteConfig || !within(resolve(await realpath(root), spriteConfig.directory), path)) throw new Error("SVG sprite 源路径不在已确认规则内");
       if (!spriteCompiler) {
         const requireProject = createRequire(resolve(root, "package.json"));
         const requireLoader = createRequire(requireProject.resolve("svg-sprite-loader"));

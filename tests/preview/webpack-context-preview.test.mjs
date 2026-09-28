@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { discoverPreviewRuntimeContext, buildComponentPreviewRegistry, buildPreviewRuntimeFiles } from '../../dist/preview/component-preview-runtime.js';
@@ -74,6 +74,23 @@ test('SVG transformation marks actual files for sprite compilation and missing s
   assert.match(result.code, /star\.svg\?vibehub-svg-symbol/);
   assert.match(result.code, /"\.\/star\.svg"/);
   await assert.rejects(plugin.load(join(root, 'src/assets/icons/svg/star.svg') + '?vibehub-svg-symbol'), /svg-sprite-loader/);
+}));
+
+test('SVG transformation and loading recognize a project directory alias', async () => fixture(async (root) => {
+  const aliasRoot = await mkdtemp(join(tmpdir(), 'vibe-svg-alias-'));
+  try {
+    const alias = join(aliasRoot, 'project');
+    await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const context = await discoverPreviewRuntimeContext(root);
+    const plugin = webpackContextPreviewPlugin(alias, context.webpackSvgSprites);
+    const entry = join(alias, 'src/assets/icons/index.js');
+    const result = await plugin.transform.call({ addWatchFile() {} }, await readFile(entry, 'utf8'), entry);
+    assert.match(result.code, /star\.svg\?vibehub-svg-symbol/);
+    const icon = await realpath(join(root, 'src/assets/icons/svg/star.svg'));
+    await assert.rejects(plugin.load(icon + '?vibehub-svg-symbol'), /svg-sprite-loader/);
+  } finally {
+    await rm(aliasRoot, { recursive: true, force: true });
+  }
 }));
 
 test('local require bindings and duplicate SVG symbol names fail explicitly', async () => fixture(async (root, put) => {

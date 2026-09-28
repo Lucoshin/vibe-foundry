@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { runCli } from '../../dist/cli.js';
 
@@ -45,7 +45,8 @@ test('learning CLI prepares a real frozen task using source-specific default rec
     assert.equal(task.status, 'prepared');
     assert.deepEqual(task.source, source(kind));
     assert.match(await readFile(task.taskPath, 'utf8'), /sourceDigest/);
-    assert.ok(task.taskPath.startsWith(process.env.VIBEHUB_LIBRARY_ROOT));
+    const taskRelativePath = relative(await realpath(process.env.VIBEHUB_LIBRARY_ROOT), await realpath(task.taskPath));
+    assert.ok(!isAbsolute(taskRelativePath) && !taskRelativePath.startsWith('..'));
   }
   assert.equal((await cli('learn', 'tasks')).length, 2);
 });
