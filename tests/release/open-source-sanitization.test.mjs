@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
@@ -8,18 +9,13 @@ import { describe, it } from "node:test";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const currentRunbookDirectory = "docs/runbooks";
 const skillPaths = [
-  ".agents/skills/vibe-foundry/SKILL.md",
-  "plugins/vibe-foundry/skills/vibe-foundry/SKILL.md",
+  ".agents/skills/vibehub/SKILL.md",
+  "plugins/vibehub/skills/vibehub/SKILL.md",
 ];
 const currentSourcePaths = [
   "src/writers/agent-rules-writer.ts",
   "src/web/frontend.ts",
 ];
-const reviewedBinaryPaths = new Set([
-  "output/pencil-web-design/AJTN7.png",
-  "output/playwright/web-asset-browser-desktop.png",
-  "output/playwright/web-asset-browser-mobile.png",
-]);
 const knownBinaryExtensions = new Set([
   ".7z", ".avi", ".avif", ".bin", ".class", ".db", ".dll", ".dylib", ".exe",
   ".flac", ".gif", ".gz", ".ico", ".jar", ".jpeg", ".jpg", ".mkv", ".mov",
@@ -27,8 +23,6 @@ const knownBinaryExtensions = new Set([
   ".sqlite", ".sqlite3", ".tar", ".tgz", ".ttf", ".wasm", ".wav", ".webm",
   ".webp", ".woff", ".woff2", ".zip",
 ]);
-const historicalDocumentDirectories = ["docs/adr", "docs/plans"];
-const sourceLocalAssetPathPattern = /\.vibe-foundry[\\/](?!library(?:[\\/]|(?=$|[\s`'"\)\],.;:，。；：、])))/iu;
 
 async function listTextFiles(entry) {
   const absoluteEntry = join(repositoryRoot, entry);
@@ -58,15 +52,12 @@ function listPublicCandidatePaths() {
   )
     .toString("utf8")
     .split("\0")
-    .filter(Boolean);
+    .filter(path => path && existsSync(join(repositoryRoot, path)));
 }
 
 async function readPublicCandidateText(path) {
   const bytes = await readFile(join(repositoryRoot, path));
   const normalizedPath = path.replaceAll("\\", "/");
-  if (reviewedBinaryPaths.has(normalizedPath)) {
-    return null;
-  }
   assert.equal(
     bytes.subarray(0, 8192).includes(0),
     false,
@@ -99,25 +90,20 @@ function forbiddenPrivateTraces() {
   ];
 }
 
-async function findHistoricalSourceLocalDocuments() {
-  const paths = (await Promise.all(historicalDocumentDirectories.map(listTextFiles))).flat();
-  const matches = [];
-  for (const path of paths) {
-    if (sourceLocalAssetPathPattern.test(await readRepositoryText(path))) {
-      matches.push(path);
-    }
-  }
-  return matches;
-}
-
 describe("open-source sanitization", () => {
-  it("includes TSX, JSON/YAML, Pencil, dotfiles, and extensionless public candidates", async () => {
+  it("keeps local development records out of the public Git index", () => {
+    const paths = listPublicCandidatePaths();
+    const privatePaths = paths.filter(path => /^(?:docs\/(?!runbooks\/|USAGE\.md$)|(?:AGENTS|CLAUDE|KILO)\.md$|[^/]+\.pen$|\.(?:claude|kilo|codex|gitnexus)\/|output\/)/u.test(path));
+    assert.deepEqual(privatePaths, []);
+  });
+
+
+  it("includes TSX, JSON/YAML, dotfiles, and extensionless public candidates", async () => {
     const paths = listPublicCandidatePaths();
     const expectedTextCandidates = [
       "examples/fixture-project/src/components/Button.tsx",
       "package.json",
       ".github/workflows/ci.yml",
-      "VibeFoundry.pen",
       ".gitignore",
       "LICENSE",
     ];
@@ -128,7 +114,7 @@ describe("open-source sanitization", () => {
     }
   });
 
-  it("allows only the three explicitly reviewed PNG public candidates as binary", async () => {
+  it("excludes local binary artifacts from public candidates", async () => {
     const paths = listPublicCandidatePaths();
     const detectedBinaryPaths = [];
     for (const path of paths) {
@@ -138,19 +124,10 @@ describe("open-source sanitization", () => {
         detectedBinaryPaths.push(path.replaceAll("\\", "/"));
       }
     }
-    const expectedBinaryPaths = [
-      "output/pencil-web-design/AJTN7.png",
-      "output/playwright/web-asset-browser-desktop.png",
-      "output/playwright/web-asset-browser-mobile.png",
-    ];
+    const expectedBinaryPaths = [];
 
-    assert.deepEqual([...reviewedBinaryPaths].sort(), expectedBinaryPaths);
     assert.deepEqual(detectedBinaryPaths.sort(), expectedBinaryPaths);
 
-    for (const path of reviewedBinaryPaths) {
-      assert.ok(paths.includes(path), path);
-      assert.equal(await readPublicCandidateText(path), null, path);
-    }
   });
 
   it("excludes generated GitNexus skills and local databases while retaining the project skill", async () => {
@@ -161,7 +138,7 @@ describe("open-source sanitization", () => {
     const gitignore = await readRepositoryText(".gitignore");
 
     assert.deepEqual(generatedSkillPaths, []);
-    assert.ok(paths.includes(".agents/skills/vibe-foundry/SKILL.md"));
+    assert.ok(paths.includes(".agents/skills/vibehub/SKILL.md"));
     assert.match(gitignore, /^\.claude\/skills\/gitnexus\*\/$/mu);
     assert.match(gitignore, /^\.agents\/skills\/gitnexus\*\/$/mu);
     assert.match(gitignore, /^\*\.db$/mu);
@@ -258,49 +235,15 @@ describe("open-source sanitization", () => {
       const text = await readRepositoryText(path);
       assert.doesNotMatch(
         text,
-        /\.vibe-foundry[\\/](?!library(?:[\\/]|`|\b))/iu,
+        /\.vibehub[\\/](?!library(?:[\\/]|`|\b))/iu,
         path,
       );
       assert.doesNotMatch(
         text,
-        /(?:没有找到|只读取|inspect|读取|检查)[^\n]{0,48}\.vibe-foundry(?:\s+asset package|\s*资产包)?/iu,
+        /(?:没有找到|只读取|inspect|读取|检查)[^\n]{0,48}(?:^|[\s`"\/])\.vibehub(?:\s+asset package|\s*资产包)?/iu,
         path,
       );
     }
-  });
-
-  it("marks retained source-local history as superseded by the central-only contract", async () => {
-    const historicalSourceLocalDocuments = await findHistoricalSourceLocalDocuments();
-    assert.ok(historicalSourceLocalDocuments.length > 0);
-
-    for (const path of historicalSourceLocalDocuments) {
-      const header = (await readRepositoryText(path)).split(/\r?\n/).slice(0, 32).join("\n");
-      assert.match(header, /2026-09-01/iu, path);
-      assert.match(header, /central-only/iu, path);
-      assert.match(header, /取代/iu, path);
-    }
-  });
-
-  it("records the first-public-release removal of legacy preview cache compatibility", async () => {
-    const masterPlan = await readRepositoryText("docs/plans/2026-07-08-vibe-foundry-master-implementation.md");
-    const adr = await readRepositoryText("docs/adr/003-preview-action-cache.md");
-    const actionCachePlan = await readRepositoryText("docs/plans/2026-07-14-preview-action-cache.md");
-    const sourceFaithfulPlan = await readRepositoryText("docs/plans/2026-07-11-source-faithful-component-preview.md");
-    const masterHeader = masterPlan.split(/\r?\n/).slice(0, 24).join("\n");
-    const actionCacheHeader = actionCachePlan.split(/\r?\n/).slice(0, 16).join("\n");
-    const sourceFaithfulHeader = sourceFaithfulPlan.split(/\r?\n/).slice(0, 16).join("\n");
-
-    assert.match(masterHeader, /2026-09-01/iu);
-    assert.match(masterHeader, /central-only/iu);
-    assert.match(masterHeader, /历史实施记录|全局.*取代/iu);
-    assert.match(adr, /last_updated:\s*2026-09-01/iu);
-    assert.match(adr, /Action Cache[^\n]{0,80}唯一/iu);
-    assert.match(adr, /MISS[^\n]{0,80}直接构建/iu);
-    assert.match(actionCacheHeader, /2026-09-01/iu);
-    assert.match(actionCacheHeader, /已完成/iu);
-    assert.match(actionCachePlan, /legacy[^\n]{0,80}(?:忽略|删除)/iu);
-    assert.match(sourceFaithfulHeader, /2026-09-01/iu);
-    assert.match(sourceFaithfulHeader, /不再读取或写入/iu);
   });
 
   it("keeps generated GitNexus skill copies out of the public Git index", () => {
@@ -318,15 +261,4 @@ describe("open-source sanitization", () => {
     assert.equal(tracked, "");
   });
 
-  it("keeps project rules while removing generated GitNexus instruction blocks", async () => {
-    const agents = await readRepositoryText("AGENTS.md");
-    const claude = await readRepositoryText("CLAUDE.md");
-
-    assert.match(agents, /实现原则与编码约束/);
-    assert.match(agents, /语言规范/);
-    assert.match(agents, /文档驱动开发/);
-    assert.doesNotMatch(agents, /gitnexus:start|GitNexus — Code Intelligence/iu);
-    assert.match(claude, /\[AGENTS\.md\]\(AGENTS\.md\)/);
-    assert.doesNotMatch(claude, /gitnexus:start|GitNexus — Code Intelligence/iu);
-  });
 });

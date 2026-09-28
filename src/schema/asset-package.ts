@@ -1,6 +1,7 @@
 export const AssetKindSchema = {
   options: [
     "component",
+    "page",
     "service",
     "business-pattern",
     "page-pattern",
@@ -17,6 +18,7 @@ export const AssetKindSchema = {
 };
 
 const emptyCounts = {
+  pages: 0,
   components: 0,
   services: 0,
   businessPatterns: 0,
@@ -71,6 +73,7 @@ export function createEmptyAssetPackage(options) {
     hasBackendEntrypoints: Boolean(options.hasBackendEntrypoints),
     assetCounts: { ...emptyCounts },
     components: [],
+    pages: [],
     services: [],
     businessPatterns: [],
     tokens: [],

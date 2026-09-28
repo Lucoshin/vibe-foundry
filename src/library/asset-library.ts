@@ -7,11 +7,11 @@ export function resolveAssetLibraryRoot(explicitRoot) {
   if (typeof explicitRoot === "string" && explicitRoot.trim() === "") {
     throw new Error("Asset library root must be a non-empty path.");
   }
-  const environmentRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+  const environmentRoot = process.env.VIBEHUB_LIBRARY_ROOT;
   return resolve(
     explicitRoot
       ?? (environmentRoot?.trim() ? environmentRoot : undefined)
-      ?? join(homedir(), ".vibe-foundry", "library"),
+      ?? join(homedir(), ".vibehub", "library"),
   );
 }
 

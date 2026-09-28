@@ -2,7 +2,7 @@ import { join, resolve } from "node:path";
 
 import { openPreviewActionStore } from "./preview-action-store.js";
 import { openPreviewArtifactStore } from "./preview-artifact-store.js";
-import { canonicalSerialize } from "./preview-action.js";
+import { canonicalSerialize } from "../utils/canonical-json.js";
 
 export function openPreviewBuildCache(assetDirectory) {
   const assetDir = resolve(assetDirectory);
@@ -80,7 +80,7 @@ export function openPreviewBuildCache(assetDirectory) {
         stdoutDigest: null,
         stderrDigest: null,
         leaseOwner: result.leaseOwner,
-        completedAt: result.completedAt,
+        completedAt: result.completedAt ?? Date.now(),
       });
       return {
         committed,
@@ -96,16 +96,18 @@ export function openPreviewBuildCache(assetDirectory) {
         stdoutDigest: null,
         stderrDigest: null,
         leaseOwner: result.leaseOwner,
-        completedAt: result.completedAt,
+        completedAt: result.completedAt ?? Date.now(),
       });
     },
 
     async readFile(actionDigest, relativePath) {
-      const lookup = await this.lookup(actionDigest);
-      if (lookup.reason !== "HIT") {
-        throw new Error(`${lookup.reason}: preview action ${actionDigest}`);
+      const action = actions.getAction(actionDigest);
+      if (action?.state !== "succeeded") {
+        throw new Error(`MISS_ACTION: preview action ${actionDigest}`);
       }
-      return artifacts.readTreeFile(lookup.artifactTreeDigest, relativePath);
+      // Serving one resource verifies its tree and bytes; lookup still verifies
+      // the whole bundle before build reuse and cache diagnostics.
+      return artifacts.readTreeFile(action.artifactTreeDigest, relativePath);
     },
 
     async recordValidationEvidence(result) {

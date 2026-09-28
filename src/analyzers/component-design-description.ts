@@ -6,6 +6,7 @@ const colorNames = { white: "白色", black: "黑色", red: "红色", blue: "蓝
 const propertyNames = { transform: "变换", opacity: "不透明度", "background-color": "背景颜色", background: "背景", "border-color": "描边颜色", "box-shadow": "投影", color: "文字颜色", width: "宽度", height: "高度", all: "所有可过渡属性" };
 const easingNames = { ease: "先加速后减速", linear: "匀速", "ease-in": "逐渐加速", "ease-out": "逐渐减速", "ease-in-out": "缓入缓出" };
 const sections = ["布局", "视觉", "动效", "交互"];
+const ambiguousVariable = Symbol("ambiguous CSS variable");
 const present = (value) => value !== undefined && value !== false && value !== "false" && value !== null;
 const lengthValue = /^-?(?:\d*\.)?\d+(?:px|rem|em|%|vh|vw|dvh|dvw|svh|svw|vmin|vmax|ch|ex|rpx)?$/;
 const colorValue = /^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([^()]+\)|[a-z]+)$/i;
@@ -353,10 +354,19 @@ function describeAnimation(properties, node, keyframes, resolveValue, unresolved
   const shorthand = properties.get("animation");
   const longName = properties.get("animation-name");
   if (!shorthand && !longName) return [];
+  if (shorthand && [...properties.keys()].some((property) => property.startsWith("animation-"))) {
+    unresolved.add("动画简写与长属性同时存在，覆盖顺序及最终参数待核对，不沿用简写中的时长。");
+    return [];
+  }
   if (shorthand === "none" || longName === "none") return ["关闭关键帧动画"];
   const results = [];
   const animations = shorthand ? splitTopLevel(shorthand) : splitTopLevel(longName);
-  for (const animation of animations) {
+  for (const [index, animation] of animations.entries()) {
+    const longValue = (property) => {
+      if (!properties.has(property)) return undefined;
+      const values = splitTopLevel(properties.get(property));
+      return values[index % values.length];
+    };
     const tokens = shorthand ? splitTopLevel(animation, " ") : [animation];
     const times = tokens.filter((token) => /^\d*\.?\d+(ms|s)$/.test(token));
     const easing = tokens.find((token) => Object.hasOwn(easingNames, token));
@@ -379,12 +389,21 @@ function describeAnimation(properties, node, keyframes, resolveValue, unresolved
       if (declarations.length) frames.push(`${frame.selector.replace(/\bfrom\b/g, "起点").replace(/\bto\b/g, "终点")}：${declarations.join("，")}`);
     }
     if (!frames.length) { unresolved.add("动画缺少可确认的关键帧效果。"); continue; }
-    const duration = shorthand ? times[0] ?? "0s" : properties.get("animation-duration") ?? "0s";
-    const count = shorthand ? iteration : properties.get("animation-iteration-count");
-    const timing = shorthand ? easing : properties.get("animation-timing-function");
-    const direction = shorthand ? tokens.find((token) => ["reverse", "alternate", "alternate-reverse"].includes(token)) : properties.get("animation-direction");
-    const delay = shorthand ? times[1] : properties.get("animation-delay");
-    results.push(`关键帧动画每轮 ${duration}${count === "infinite" ? "，无限循环" : count ? `，播放 ${count} 次` : ""}${timing ? `，${easingNames[timing] ?? timing}` : ""}${direction ? `，${({ reverse: "反向播放", alternate: "往返交替播放", "alternate-reverse": "反向起始并往返交替播放" })[direction] ?? "播放方向待确认"}` : ""}${delay ? `，延迟 ${delay}` : ""}；${frames.join("；")}`);
+    const duration = shorthand ? times[0] ?? "0s" : longValue("animation-duration") ?? "0s";
+    const count = shorthand ? iteration : longValue("animation-iteration-count");
+    const timing = shorthand ? easing : longValue("animation-timing-function");
+    const direction = shorthand ? tokens.find((token) => ["reverse", "alternate", "alternate-reverse"].includes(token)) : longValue("animation-direction");
+    const delay = shorthand ? times[1] : longValue("animation-delay");
+    const playState = shorthand ? tokens.find((token) => ["paused", "running"].includes(token)) : longValue("animation-play-state");
+    const fill = shorthand ? tokens.find((token) => ["forwards", "backwards", "both"].includes(token)) : longValue("animation-fill-mode");
+    if (!/^\d*\.?\d+(ms|s)$/.test(duration) || delay && !/^-?\d*\.?\d+(ms|s)$/.test(delay)
+      || count && count !== "infinite" && !/^\d*\.?\d+$/.test(count)) {
+      unresolved.add("部分动画时长、延迟或播放次数无法确认为有效参数。");
+      continue;
+    }
+    const delayText = delay ? delay.startsWith("-") ? `，提前进入动画进度 ${delay.slice(1)}` : `，延迟 ${delay}` : "";
+    const fillText = ({ none: "不在活动阶段之外保留关键帧样式", forwards: "结束后保留结束方向对应的关键帧样式", backwards: "延迟期间使用起始方向对应的关键帧样式", both: "延迟期间与结束后保留对应方向的关键帧样式" })[fill];
+    results.push(`关键帧动画每轮 ${duration}${count === "infinite" ? "，无限循环" : count ? `，播放 ${count} 次` : ""}${timing ? `，${easingNames[timing] ?? timing}` : ""}${direction ? `，${({ normal: "正向播放", reverse: "反向播放", alternate: "往返交替播放", "alternate-reverse": "反向起始并往返交替播放" })[direction] ?? "播放方向待确认"}` : ""}${delayText}${playState === "paused" ? "，当前声明为暂停" : ""}${fillText ? `，${fillText}` : ""}；${frames.join("；")}`);
   }
   return results;
 }
@@ -419,12 +438,12 @@ export function describeComponentDesignEvidence({ nodes, styles, unresolved: ini
       while (current) {
         const conditionalGroup = groups.find((item) => item.nodeId === current.id && JSON.stringify(item.conditions) === JSON.stringify(group.conditions) && JSON.stringify(item.states) === JSON.stringify(group.states));
         const value = conditionalGroup?.properties.get(name) ?? baseGroups.get(current.id)?.properties.get(name);
-        if (value) return value.ambiguous ? null : value.value;
+        if (value) return value.ambiguous ? ambiguousVariable : value.value;
         current = byId.get(current.parentId);
       }
       const contextualRoot = groups.find((item) => item.nodeId === null && JSON.stringify(item.conditions) === JSON.stringify(group.conditions));
       const value = contextualRoot?.properties.get(name) ?? baseGroups.get(null)?.properties.get(name);
-      return value && !value.ambiguous ? value.value : null;
+      return value ? value.ambiguous ? ambiguousVariable : value.value : null;
     }
     function resolveValue(value, visited = new Set()) {
       let result = value;
@@ -437,6 +456,7 @@ export function describeComponentDesignEvidence({ nodes, styles, unresolved: ini
         const [name, ...fallback] = splitTopLevel(result.slice(start + 4, end - 1));
         if (!/^--[\w-]+$/.test(name) || visited.has(name)) { unresolved.add("样式变量缺少可确认的值或存在循环引用。"); return null; }
         const raw = variable(name) ?? (fallback.length ? fallback.join(", ") : null);
+        if (raw === ambiguousVariable) { unresolved.add("样式变量存在跨文件冲突，实际值待核对，不能采用备用值代替。"); return null; }
         if (raw === null) { unresolved.add("样式变量缺少可确认的值，需要核对实际样式环境。"); return null; }
         const replacement = resolveValue(raw, new Set([...visited, name]));
         if (replacement === null) return null;
@@ -446,20 +466,26 @@ export function describeComponentDesignEvidence({ nodes, styles, unresolved: ini
       return result;
     }
     const properties = new Map();
+    let animationUnresolved = false;
     for (const [property, entry] of group.properties) {
       if (property.startsWith("--")) continue;
-      if (entry.ambiguous) { unresolved.add("不同样式文件存在同等优先级的冲突，需要核对加载顺序。"); continue; }
+      if (entry.ambiguous) {
+        if (property.startsWith("animation")) animationUnresolved = true;
+        unresolved.add("不同样式文件存在同等优先级的冲突，需要核对加载顺序。"); continue;
+      }
       const defaultEntry = baseGroups.get(node.id)?.properties.get(property);
       if (defaultEntry && baseGroups.get(node.id) !== group) {
         const priority = priorityCompare(defaultEntry, entry);
         if (priority > 0 || priority === 0 && defaultEntry.sourceFile === entry.sourceFile && defaultEntry.order > entry.order) continue;
         if (priority === 0 && defaultEntry.sourceFile !== entry.sourceFile && defaultEntry.value !== entry.value) {
+          if (property.startsWith("animation")) animationUnresolved = true;
           unresolved.add("不同样式文件存在同等优先级的冲突，需要核对加载顺序。");
           continue;
         }
       }
       const value = resolveValue(entry.value);
       if (value !== null) properties.set(property, value);
+      else if (property.startsWith("animation")) animationUnresolved = true;
     }
     const conditions = [...group.conditions, ...group.states.map(({ nodeId, state }) => `${nodeId === node.id ? "" : nodeLabel(byId.get(nodeId))}${stateNames[state]}`)];
     if (node.conditional) conditions.unshift("条件满足并显示时");
@@ -480,12 +506,14 @@ export function describeComponentDesignEvidence({ nodes, styles, unresolved: ini
     for (const [property, value] of properties) {
       if (/^(padding|margin)-(top|right|bottom|left)$/.test(property) || property.startsWith("animation")) continue;
       if (/^border-(width|style|color)$/.test(property) && properties.has("border-style")) continue;
-      const description = describeProperty(property, value, properties);
+      let description = describeProperty(property, value, properties);
+      if (property === "transform" && !group.states.length && description?.[1]) description = ["视觉", `静态变换：${description[1]}`];
       if (description && description[1] === "") continue;
       if (description?.[1]) descriptions[description[0]].push(description[1]);
       else unresolved.add(property === "transform" ? "部分变换效果尚不能准确描述，需要核对实际位移或旋转。" : "部分样式属性尚不能转换为可确认的效果描述。");
     }
-    descriptions.动效.push(...describeAnimation(properties, node, keyframes, resolveValue, unresolved));
+    if (animationUnresolved) unresolved.add("动画参数存在未解析值或冲突，不能用默认参数代替实际声明。");
+    else descriptions.动效.push(...describeAnimation(properties, node, keyframes, resolveValue, unresolved));
     for (const section of sections) if (descriptions[section].length) {
       translatedStyles += descriptions[section].length;
       append(section, `${prefix}${descriptions[section].join("，")}`);
@@ -497,7 +525,8 @@ export function describeComponentDesignEvidence({ nodes, styles, unresolved: ini
   }
   if (!translatedStyles) unresolved.add("样式依据不足，具体视觉参数与动效需要确认。");
   const empty = { 布局: "缺少可确认的结构和布局依据。", 视觉: "样式依据不足，配色、尺寸、材质等视觉效果待确认。", 动效: "未确认具体动效，不预设动画或过渡。", 交互: "未确认具体操作与反馈。" };
-  const prompt = `请按以下要求实现组件效果；待确认的部分需进一步核对。\n\n${sections.map((section) => `## ${section}\n${output[section].length ? [...new Set(output[section])].map((line) => `- ${line}。`).join("\n") : empty[section]}`).join("\n\n")}`;
+  const limits = [...unresolved].sort();
+  const prompt = `请依据以下源码静态分析实现组件效果；尚未经实机视觉与交互验证。尺寸和颜色来自可确认的声明，不代表浏览器最终计算值；状态样式只说明源码中的条件，实际触发与业务反馈待核对。\n\n${sections.map((section) => `## ${section}\n${output[section].length ? [...new Set(output[section])].map((line) => `- ${line}。`).join("\n") : empty[section]}`).join("\n\n")}${limits.length ? `\n\n**待核对**\n${limits.map((item) => `- ${item}`).join("\n")}` : ""}`;
   return { prompt, unresolved: [...unresolved].sort() };
 }
 

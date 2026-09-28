@@ -30,13 +30,13 @@ function assert(condition, message) {
   }
 }
 
-const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-mvp-library-"));
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-mvp-library-"));
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 try {
-  process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+  process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
   const environment = {
     ...process.env,
-    VIBE_FOUNDRY_LIBRARY_ROOT: libraryRoot,
+    VIBEHUB_LIBRARY_ROOT: libraryRoot,
   };
 
   run("npm", ["test"], environment);
@@ -51,8 +51,8 @@ try {
   );
   const index = await readJson(join(libraryRoot, "index.json"));
   const projectEntry = index.projects.find((project) => project.projectRoot === manifest.projectRoot);
-  const { callVibeFoundryTool } = await import("../dist/mcp/server.js");
-  const conceptSearch = await callVibeFoundryTool(fixtureRoot, "search_concept_assets", {
+  const { callVibeHubTool } = await import("../dist/mcp/server.js");
+  const conceptSearch = await callVibeHubTool(fixtureRoot, "search_concept_assets", {
     query: "library",
   });
 
@@ -71,7 +71,7 @@ try {
 
   const componentPath = "src/components/Button.tsx";
   const { readComponentPrompt } = await import("../dist/library/component-prompts.js");
-  const componentPrompt = await callVibeFoundryTool(fixtureRoot, "get_component_prompt", { filePath: componentPath });
+  const componentPrompt = await callVibeHubTool(fixtureRoot, "get_component_prompt", { filePath: componentPath });
   const storedPrompt = await readComponentPrompt(assetDir, componentPath);
   assert(!componentPrompt.isError, "MCP get_component_prompt should return the fixture component prompt");
   assert(JSON.stringify(componentPrompt.structuredContent) === JSON.stringify(storedPrompt), "MCP component prompt should match its persisted record exactly");
@@ -79,17 +79,17 @@ try {
   assert(["布局", "视觉", "动效", "交互", "Continue"].every((text) => storedPrompt.prompt.includes(text)), "component prompt should describe the four design dimensions and actual visible label");
   assert(!/export function|import |```|<button/.test(storedPrompt.prompt), "component prompt must not include source code");
 
-  const plugin = await readJson("plugins/vibe-foundry/.codex-plugin/plugin.json");
-  assert(plugin.name === "vibe-foundry", "plugin manifest name should be vibe-foundry");
+  const plugin = await readJson("plugins/vibehub/.codex-plugin/plugin.json");
+  assert(plugin.name === "vibehub", "plugin manifest name should be vibehub");
   assert(plugin.skills === "./skills/", "plugin manifest should declare skills");
   assert(plugin.mcpServers === "./.mcp.json", "plugin manifest should declare MCP config");
 
   console.log("MVP verification passed.");
 } finally {
   if (originalLibraryRoot === undefined) {
-    delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+    delete process.env.VIBEHUB_LIBRARY_ROOT;
   } else {
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+    process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
   }
   await rm(libraryRoot, { recursive: true, force: true });
 }

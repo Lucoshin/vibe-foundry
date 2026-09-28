@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {runInNewContext} from 'node:vm';
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,12 +7,13 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { openPreviewBuildCache } from "../../dist/preview/preview-build-cache.js";
+import { openPreviewArtifactStore } from "../../dist/preview/preview-artifact-store.js";
 
 const roots = [];
 
 async function createFixture() {
-  const assetDir = await mkdtemp(join(tmpdir(), "vibe-foundry-build-cache-"));
-  const outputDir = await mkdtemp(join(tmpdir(), "vibe-foundry-build-output-"));
+  const assetDir = await mkdtemp(join(tmpdir(), "vibehub-build-cache-"));
+  const outputDir = await mkdtemp(join(tmpdir(), "vibehub-build-output-"));
   roots.push(assetDir, outputDir);
   await mkdir(join(outputDir, "assets"), { recursive: true });
   await writeFile(join(outputDir, "index.html"), "<title>Cached Preview</title>");
@@ -28,6 +30,38 @@ async function assertLogBlobAbsent(assetDir, content) {
 }
 
 describe("preview build cache", () => {
+  it("timestamps publication after artifact persistence while preserving an explicit test clock", async () => {
+    const source=await readFile(new URL('../../src/preview/preview-build-cache.ts',import.meta.url),'utf8');
+    let clock=100;
+    let captured;
+    const factory=runInNewContext('('+source.slice(source.indexOf('export function openPreviewBuildCache(')).replace(/^export /,'')+')',{
+      resolve:value=>value,join,
+      Date:{now:()=>clock},
+      openPreviewActionStore:()=>({recordActionSuccess(value){captured=value;return true;}}),
+      openPreviewArtifactStore:()=>({async commitDirectory(){clock=400;return {treeDigest:'artifact'};}}),
+    });
+    const cache=factory('fixture');
+    await cache.commitSuccess({actionDigest:'action',leaseOwner:'owner',outputDir:'output'});
+    assert.equal(captured.completedAt,400,'clock must be read after CAS publication advances time');
+    await cache.commitSuccess({actionDigest:'action',leaseOwner:'owner',outputDir:'output',completedAt:123});
+    assert.equal(captured.completedAt,123,'explicit deterministic test timestamp remains supported');
+  });
+  it("reads only the requested artifact while still rejecting corrupt requested bytes", async () => {
+    const { assetDir, outputDir } = await createFixture();
+    const cache = openPreviewBuildCache(assetDir);
+    try {
+      const digest = "f".repeat(64);
+      cache.claim(digest, "worker", { now: 100, ttlMs: 100 });
+      const committed = await cache.commitSuccess({ actionDigest: digest, leaseOwner: "worker", outputDir, completedAt: 101 });
+      const artifacts = openPreviewArtifactStore(join(assetDir, "preview-cas"));
+      const tree = await artifacts.readTree(committed.artifactTreeDigest);
+      const script = tree.entries.find(entry => entry.path === "assets/app.js");
+      await writeFile(artifacts.blobPath(script.digest), "tampered");
+      assert.equal((await cache.readFile(digest, "index.html")).toString(), "<title>Cached Preview</title>");
+      await assert.rejects(cache.readFile(digest, "assets/app.js"), /CORRUPT_ARTIFACT/);
+      assert.equal((await cache.lookup(digest)).reason, "CORRUPT_ARTIFACT");
+    } finally { cache.close(); }
+  });
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });

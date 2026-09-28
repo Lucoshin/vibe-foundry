@@ -20,13 +20,21 @@ function highValue(items) {
 
 export function buildReuseReportMarkdown(assetPackage) {
   const lines = ["# Reuse Report\n\n"];
-
   lines.push("## High Value Component Assets\n\n");
   lines.push(
     listLines(highValue(assetPackage.components), (component) => {
       return `${component.name} (${component.filePath})`;
     }),
   );
+  lines.push("\n");
+
+  if (assetPackage.componentSelection) {
+    lines.push('## 组件方案取舍\n\n');
+    lines.push(listLines(assetPackage.componentSelection, item => `${item.filePath} — ${item.decision === 'merge' ? '合并至 ' + item.canonicalFilePath : item.decision === 'context-only' ? '整页入口仅保留来源场景，不计为独立组件' : '不单独产出'}（${item.rule}）；源码及依赖保留。`));
+    lines.push('\n');
+  }
+  lines.push("## 页面使用场景与辅助覆盖\n\n");
+  lines.push(listLines(assetPackage.pages, page => `${page.name} — ${page.route} (${page.filePath})；${page.blocks.length} 处组件调用，${page.states.length} 处条件状态；交互需按实际场景验证。`));
   lines.push("\n");
 
   lines.push("## High Value Service Assets\n\n");

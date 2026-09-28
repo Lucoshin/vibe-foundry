@@ -119,7 +119,7 @@ describe("open-source release configuration", () => {
     assert.match(license, /APPENDIX: How to apply the Apache License to your work\./);
     assert.equal(
       (await readText("NOTICE")).replaceAll("\r\n", "\n").trim(),
-      "VibeFoundry\nCopyright 2026 Lucoshin",
+      "VibeHub\nCopyright 2026 Lucoshin",
     );
   });
 
@@ -133,7 +133,6 @@ describe("open-source release configuration", () => {
       ".github/ISSUE_TEMPLATE/config.yml",
       ".github/pull_request_template.md",
       ".github/dependabot.yml",
-      "docs/reports/open-source-release-checklist.md",
     ];
     const contents = await Promise.all(requiredFiles.map(readText));
     const [contributing, security, conduct, bugReport, featureRequest, issueConfig, pullRequest] = contents;
@@ -155,15 +154,13 @@ describe("open-source release configuration", () => {
 
   it("documents source-only setup, the centralized library, and the execution trust boundary", async () => {
     const readme = await readText("README.md");
-    const docsIndex = await readText("docs/README.md");
+    const docsIndex = await readText("docs/USAGE.md");
     const contributing = await readText("CONTRIBUTING.md");
-    const masterPlan = await readText("docs/plans/2026-07-08-vibe-foundry-master-implementation.md");
     const security = await readText("SECURITY.md");
-    const releaseChecklist = await readText("docs/reports/open-source-release-checklist.md");
 
     assert.match(readme, /git clone https:\/\/github\.com\/Lucoshin\/vibe-foundry\.git/);
     assert.match(readme, /不发布 npm|未发布到 npm/);
-    assert.match(readme, /assetLibraryRoot[\s\S]*VIBE_FOUNDRY_LIBRARY_ROOT[\s\S]*\.vibe-foundry\/library/);
+    assert.match(readme, /assetLibraryRoot[\s\S]*VIBEHUB_LIBRARY_ROOT[\s\S]*\.vibehub\/library/);
     assert.match(readme, /绝对路径/);
     assert.match(readme, /不要提交|不得提交/);
     assert.match(readme, /sourceScript/);
@@ -174,7 +171,6 @@ describe("open-source release configuration", () => {
     for (const [path, text] of [
       ["README.md", readme],
       ["CONTRIBUTING.md", contributing],
-      ["master plan", masterPlan],
     ]) {
       assert.match(text, />=22\.18\.0 <23[^\n]*>=24\.11\.0/u, path);
     }
@@ -183,16 +179,11 @@ describe("open-source release configuration", () => {
       assert.match(text, /同源[^\n]{0,120}父窗口[^\n]{0,120}(?:其他|其余) API/u, path);
       assert.match(text, /networkPolicy[^\n]{0,120}不是[^\n]{0,40}安全沙箱/u, path);
     }
-    assert.match(releaseChecklist, /首个版本只发布 GitHub 源码，不发布 npm 包/u);
-    assert.match(releaseChecklist, /仓库所有者明确确认后，才创建公开仓库并推送/u);
-    assert.match(releaseChecklist, /^当前状态：\S[^\n]+/mu);
-    assert.match(releaseChecklist, /node scripts\/verify-mvp\.mjs/u);
-    assert.match(docsIndex, /open-source-release-checklist\.md/);
-    assert.doesNotMatch(`${readme}\n${docsIndex}`, /[A-Z]:\\(?:Users|VibeFoundry)\\/i);
+    assert.doesNotMatch(`${readme}\n${docsIndex}`, /[A-Z]:\\(?:Users|VibeHub)\\/i);
   });
 
   it("publishes project ownership in plugin and marketplace metadata", async () => {
-    const manifest = await readJson("plugins/vibe-foundry/.codex-plugin/plugin.json");
+    const manifest = await readJson("plugins/vibehub/.codex-plugin/plugin.json");
     const marketplace = await readJson(".agents/plugins/marketplace.json");
 
     assert.equal(manifest.author.name, "Lucoshin");
@@ -201,8 +192,8 @@ describe("open-source release configuration", () => {
     assert.equal(manifest.repository, "https://github.com/Lucoshin/vibe-foundry");
     assert.equal(manifest.homepage, "https://github.com/Lucoshin/vibe-foundry#readme");
     assert.equal(manifest.interface.developerName, "Lucoshin");
-    assert.equal(marketplace.name, "vibe-foundry");
-    assert.equal(marketplace.interface.displayName, "VibeFoundry");
+    assert.equal(marketplace.name, "vibehub");
+    assert.equal(marketplace.interface.displayName, "VibeHub");
   });
 
   it("runs a least-privilege pinned GitHub Actions matrix and dependency updates", async () => {

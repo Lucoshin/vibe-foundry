@@ -1,6 +1,13 @@
+import { createLearningRequestHandler } from './learning-api.js';
+import { createAssetUseRequestHandler } from './asset-use-api.js';
+import {createConversationRequestHandler} from './conversation-api.js';
+import {createCreatorRequestHandler} from './creator-api.js';
+import {createPromptRequestHandler} from './prompt-api.js';
+import {createImageEditRequestHandler} from './image-edit-api.js';
+import {createKnowledgeCollectionsRequestHandler} from './knowledge-collections-api.js';
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 
 import {
@@ -13,7 +20,7 @@ import {
   browserMountValidatorDigest,
   createBrowserMountEvidence,
 } from "../preview/preview-validation.js";
-import { loadAssetLibraryViewModel, loadAssetViewModel } from "./asset-view-model.js";
+import { loadAssetLibraryViewModel, loadAssetViewModel } from "../application/asset-catalog.js";
 import { renderWebAppHtml, webAppCss } from "./frontend.js";
 import { readComponentPrompt } from "../library/component-prompts.js";
 import { createImportRequestHandler } from "./local-import.js";
@@ -34,6 +41,10 @@ function contentTypeFor(filePath) {
   if (extension === ".css") return "text/css; charset=utf-8";
   if (extension === ".json") return "application/json; charset=utf-8";
   if (extension === ".svg") return "image/svg+xml";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".mp4") return "video/mp4";
+  if (extension === ".webm") return "video/webm";
+  if (extension === ".woff2") return "font/woff2";
   if (extension === ".png") return "image/png";
   if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
   return "application/octet-stream";
@@ -109,11 +120,12 @@ function previewStatusHtml(title, message, { loading = false, technicalDetail = 
     ${loading ? `<script>
 async function checkPreview() {
   try {
-    const response = await fetch(window.location.href, { cache: "no-store" });
-    if (response.headers.get("x-vibe-preview-state") === "building") {
-      setTimeout(checkPreview, 800);
-      return;
-    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("wait", "1");
+    let response;
+    do {
+      response = await fetch(url.href, { cache: "no-store" });
+    } while (response.status === 202);
     if (!response.ok) {
       const failurePage = await response.text();
       document.open();
@@ -126,7 +138,7 @@ async function checkPreview() {
     document.getElementById("preview-status-message").textContent = "无法连接预览服务，请刷新页面重试。";
   }
 }
-setTimeout(checkPreview, 800);
+checkPreview();
 </script>` : ""}
   </body>
 </html>
@@ -147,11 +159,33 @@ export function createWebRequestHandler(projectRoot, options = {}) {
   const libraryRoot = resolveAssetLibraryRoot(options.assetLibraryRoot);
   const importToken = randomUUID();
   const handleImport = createImportRequestHandler({ libraryRoot, token: importToken });
+  const handleLearning = createLearningRequestHandler({libraryRoot, token: importToken});
+  const handleConversation=createConversationRequestHandler({libraryRoot,token:importToken});
+  const handleCreator=createCreatorRequestHandler({libraryRoot,token:importToken});
+  const handlePrompts=createPromptRequestHandler({libraryRoot,token:importToken});
+  const handleImageEdit=createImageEditRequestHandler({libraryRoot,token:importToken});
+  const handleCollections=createKnowledgeCollectionsRequestHandler({libraryRoot,token:importToken});
+  const handleAssetUse = createAssetUseRequestHandler({libraryRoot, token: importToken});
   const resolvedProjectRoot = projectRoot ? resolve(projectRoot) : undefined;
   const previewBuilds = new Map();
   const previewMountTokens = new Map();
+  const previewJsonFiles = new Map();
   const previewBuildQueue = [];
   let activePreviewBuilds = 0;
+
+  async function readPreviewJson(path) {
+    const metadata = await stat(path, { bigint: true });
+    const signature = `${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+    const current = previewJsonFiles.get(path);
+    if (current?.signature === signature) return current.promise;
+    const record = { signature, promise: null };
+    record.promise = readFile(path, "utf8").then(JSON.parse).catch(error => {
+      if (previewJsonFiles.get(path) === record) previewJsonFiles.delete(path);
+      throw error;
+    });
+    previewJsonFiles.set(path, record);
+    return record.promise;
+  }
 
   function runQueuedPreviewBuilds() {
     while (activePreviewBuilds < 2 && previewBuildQueue.length > 0) {
@@ -196,7 +230,7 @@ export function createWebRequestHandler(projectRoot, options = {}) {
   async function previewTargetFor(component) {
     if (resolvedProjectRoot) {
       const assetDir = assetPackageDirectoryFor(libraryRoot, resolvedProjectRoot);
-      const registry = JSON.parse(await readFile(join(assetDir, "component-previews.json"), "utf8"));
+      const registry = await readPreviewJson(join(assetDir, "component-previews.json"));
       const matches = registry.previews.filter((candidate) => candidate.id === component);
       if (matches.length > 1) {
         throw new Error(`Component preview ID collision: ${component}. Run node dist/cli.js distill <project-root> again.`);
@@ -214,7 +248,7 @@ export function createWebRequestHandler(projectRoot, options = {}) {
     }
     let index;
     try {
-      index = JSON.parse(await readFile(join(libraryRoot, "index.json"), "utf8"));
+      index = await readPreviewJson(join(libraryRoot, "index.json"));
     } catch (error) {
       if (error?.code === "ENOENT") throw new Error(`Component preview source project not found: ${component}`);
       throw error;
@@ -222,7 +256,7 @@ export function createWebRequestHandler(projectRoot, options = {}) {
     const matches = (await Promise.all(index.projects.map(async (project) => {
       let registry;
       try {
-        registry = JSON.parse(await readFile(join(project.assetPackageDir, "component-previews.json"), "utf8"));
+        registry = await readPreviewJson(join(project.assetPackageDir, "component-previews.json"));
       } catch (error) {
         if (error?.code === "ENOENT") return [];
         throw error;
@@ -341,10 +375,6 @@ export function createWebRequestHandler(projectRoot, options = {}) {
   }
 
   async function previewBundleIfReady(component) {
-    const cached = await cachedPreviewBundle(component);
-    if (cached) {
-      return cached;
-    }
     const record = await startPreviewBuild(component);
     if (record.error) {
       previewBuilds.delete(component);
@@ -353,13 +383,18 @@ export function createWebRequestHandler(projectRoot, options = {}) {
     return record.bundle;
   }
 
-  async function ensurePreviewBundle(component) {
-    const cached = await cachedPreviewBundle(component);
-    if (cached) {
-      return cached;
-    }
+  async function ensurePreviewBundle(component, waitMs) {
     const record = await startPreviewBuild(component);
-    const bundle = await record.promise;
+    let timer;
+    let bundle;
+    try {
+      bundle = waitMs === undefined ? await record.promise : await Promise.race([
+        record.promise,
+        new Promise(resolvePromise => { timer = setTimeout(() => resolvePromise(null), waitMs); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     if (record.error) {
       previewBuilds.delete(component);
       throw record.error;
@@ -367,13 +402,19 @@ export function createWebRequestHandler(projectRoot, options = {}) {
     return bundle;
   }
 
-  async function servePreviewFile(response, bundle, assetPath) {
+  async function servePreviewFile(response, bundle, assetPath, versioned = false) {
     if (!bundle.actionDigest || !bundle.assetDir) {
       throw new Error("Component preview bundle must reference the Action Cache.");
     }
     const cache = openPreviewBuildCache(bundle.assetDir);
     try {
       const body = await cache.readFile(bundle.actionDigest, assetPath);
+      if (assetPath.startsWith("website/") && assetPath.endsWith(".html")) {
+        response.setHeader("content-security-policy", "sandbox allow-scripts");
+      }
+      if (versioned && extname(assetPath).toLowerCase() !== ".html") {
+        response.setHeader("cache-control", "private, max-age=31536000, immutable");
+      }
       send(response, 200, contentTypeFor(assetPath), body);
       return true;
     } catch (error) {
@@ -388,7 +429,6 @@ export function createWebRequestHandler(projectRoot, options = {}) {
 
   async function versionedPreviewBundle(component, actionDigest) {
     const target = await previewTargetFor(component);
-    if (target.actionDigest === actionDigest) return cachedPreviewBundle(component, target);
     const cache = openPreviewBuildCache(target.assetDir);
     try {
       const action = cache.getAction(actionDigest);
@@ -406,6 +446,13 @@ export function createWebRequestHandler(projectRoot, options = {}) {
 
   return async function handle(request, response) {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (await handleLearning(request, response, url)) return;
+    if (await handleConversation(request,response,url)) return;
+    if (await handleCreator(request,response,url)) return;
+    if (await handlePrompts(request,response,url)) return;
+    if (await handleImageEdit(request,response,url)) return;
+    if (await handleCollections(request,response,url)) return;
+    if (await handleAssetUse(request, response, url)) return;
     if (await handleImport(request, response, url)) return;
     const componentPromptPrefix = "/api/component-prompt/";
     if (request.method === "GET" && url.pathname.startsWith(componentPromptPrefix)) {
@@ -422,7 +469,7 @@ export function createWebRequestHandler(projectRoot, options = {}) {
           send(response, 409, "application/json; charset=utf-8", JSON.stringify({ message: model.message }));
           return;
         }
-        const matches = model.assets.filter((asset) => asset.id === assetId && asset.category === "components");
+        const matches = model.assets.filter((asset) => asset.id === assetId && ["components", "pages"].includes(asset.category));
         if (matches.length !== 1) {
           send(response, matches.length ? 409 : 404, "application/json; charset=utf-8", JSON.stringify({
             message: matches.length ? `Ambiguous component asset id: ${assetId}` : `Component asset not found: ${assetId}`,
@@ -518,6 +565,7 @@ export function createWebRequestHandler(projectRoot, options = {}) {
       return;
     }
     if (previewPath) {
+      response.setHeader("cache-control", "no-store");
       try {
         if (previewPath.actionDigest) {
           const bundle = await versionedPreviewBundle(previewPath.component, previewPath.actionDigest);
@@ -528,12 +576,19 @@ export function createWebRequestHandler(projectRoot, options = {}) {
           if (previewPath.assetPath === "index.html") {
             issuePreviewMountToken(response, previewPath.component, bundle.actionDigest);
           }
-          if (!await servePreviewFile(response, bundle, previewPath.assetPath)) {
+          if (!await servePreviewFile(response, bundle, previewPath.assetPath, true)) {
             send(response, 404, "text/plain; charset=utf-8", "Preview file not found");
           }
           return;
         }
         if (previewPath.assetPath === "index.html") {
+          if (url.searchParams.get("wait") === "1") {
+            // Release slow waiters so the browser can use its connection pool
+            // for ready previews and their resources between wait requests.
+            const bundle = await ensurePreviewBundle(previewPath.component, 1_000);
+            send(response, bundle ? 204 : 202, "text/plain; charset=utf-8", "");
+            return;
+          }
           const bundle = await previewBundleIfReady(previewPath.component);
           if (!bundle) {
             sendLoadingPreview(response);

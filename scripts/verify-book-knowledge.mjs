@@ -15,10 +15,10 @@ if (args.length && (args.length !== 2 || args[0] !== "--output" || !args[1].trim
 const keepOutput = args.length === 2;
 const outputParent = keepOutput ? resolve(args[1]) : tmpdir();
 if (keepOutput) await mkdir(outputParent, { recursive: true });
-const temporaryPrefix = "vibe-foundry-book-verification-";
+const temporaryPrefix = "vibehub-book-verification-";
 const root = await mkdtemp(join(outputParent, temporaryPrefix));
 const libraryRoot = join(root, "library");
-const environment = { ...process.env, VIBE_FOUNDRY_LIBRARY_ROOT: libraryRoot };
+const environment = { ...process.env, VIBEHUB_LIBRARY_ROOT: libraryRoot };
 const bookPath = join(repositoryRoot, "examples", "fixture-book", "雾港.md");
 const analysisPath = join(repositoryRoot, "examples", "fixture-book", "analysis.json");
 

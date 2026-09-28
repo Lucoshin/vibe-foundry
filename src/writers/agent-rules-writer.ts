@@ -1,6 +1,6 @@
 export function buildAgentRulesMarkdown() {
   return [
-    "# VibeFoundry Agent Rules",
+    "# VibeHub Agent Rules",
     "",
     "## 资产查找",
     "",
@@ -22,7 +22,7 @@ export function buildAgentRulesMarkdown() {
     "",
     "## 验证",
     "",
-    "- 修改 VibeFoundry 后运行 `npm test` 和 `npm run build`。",
+    "- 修改 VibeHub 后运行 `npm test` 和 `npm run build`。",
     "- 修改 CLI 输出后用 `node dist/cli.js distill <fixture-project>` 做端到端验证。",
     "",
   ].join("\n");

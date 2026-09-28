@@ -1,0 +1,31 @@
+{
+  "name": "vibehub",
+  "version": "0.1.0",
+  "description": "Distill evidence-backed knowledge and reusable assets from websites, projects, books, text and development experience.",
+  "author": {
+    "name": "Lucoshin",
+    "url": "https://github.com/Lucoshin"
+  },
+  "homepage": "https://github.com/Lucoshin/vibe-foundry#readme",
+  "repository": "https://github.com/Lucoshin/vibe-foundry",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "VibeHub",
+    "shortDescription": "Distill targets into reusable VibeHub assets.",
+    "longDescription": "VibeHub combines configurable distillation recipes, traceable knowledge, application records and reusable project assets through a shared Web, Skill and MCP library. Semantic analysis is performed by the current host agent.",
+    "developerName": "Lucoshin",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/Lucoshin/vibe-foundry",
+    "capabilities": [
+      "Skills",
+      "MCP"
+    ],
+    "defaultPrompt": [
+      "Use $vibehub to distill this website with interactive control previews.",
+      "Use $vibehub to distill this project.",
+      "Use $vibehub to distill this development conversation into traceable knowledge."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

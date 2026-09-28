@@ -1,14 +1,14 @@
 {
-  "name": "vibe-foundry",
+  "name": "vibehub",
   "interface": {
-    "displayName": "VibeFoundry"
+    "displayName": "VibeHub"
   },
   "plugins": [
     {
-      "name": "vibe-foundry",
+      "name": "vibehub",
       "source": {
         "source": "local",
-        "path": "./plugins/vibe-foundry"
+        "path": "./plugins/vibehub"
       },
       "policy": {
         "installation": "AVAILABLE",

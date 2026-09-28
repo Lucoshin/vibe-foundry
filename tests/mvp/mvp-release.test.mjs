@@ -14,23 +14,12 @@ describe("MVP release artifacts", () => {
   it("documents a 10-minute quickstart with install, distill, MCP, and plugin checks", async () => {
     const quickstart = await readText("docs/runbooks/quickstart.md");
 
-    assert.match(quickstart, /# VibeFoundry Quickstart/);
+    assert.match(quickstart, /# VibeHub Quickstart/);
     assert.match(quickstart, /npm test/);
     assert.match(quickstart, /npm run build/);
     assert.match(quickstart, /node dist\/cli\.js distill examples\/fixture-project/);
     assert.match(quickstart, /search_concept_assets/);
-    assert.match(quickstart, /plugins\/vibe-foundry/);
-  });
-
-  it("ships a release checklist with verification commands and known limits", async () => {
-    const checklist = await readText("docs/reports/mvp-release-checklist.md");
-
-    assert.match(checklist, /# MVP Release Checklist/);
-    assert.match(checklist, /npm test/);
-    assert.match(checklist, /npm run build/);
-    assert.match(checklist, /scripts\/verify-mvp\.mjs/);
-    assert.match(checklist, /Known Limits/);
-    assert.match(checklist, /GitNexus/);
+    assert.match(quickstart, /plugins\/vibehub/);
   });
 
   it("includes a realistic fixture project covering engineering, product, and metaphor assets", async () => {
@@ -44,7 +33,7 @@ describe("MVP release artifacts", () => {
       "examples/fixture-project/docs/metaphors/memory-palace.md",
     );
 
-    assert.equal(packageJson.name, "vibe-foundry-fixture");
+    assert.equal(packageJson.name, "vibehub-fixture");
     assert.match(button, /className/);
     assert.match(route, /POST/);
     assert.match(product, /Onboarding/);
@@ -63,10 +52,10 @@ describe("MVP release artifacts", () => {
     assert.match(script, /search_concept_assets/);
     assert.match(script, /get_component_prompt/);
     assert.match(script, /mkdtemp/);
-    assert.match(script, /VIBE_FOUNDRY_LIBRARY_ROOT/);
+    assert.match(script, /VIBEHUB_LIBRARY_ROOT/);
     assert.match(script, /assetPackageDirectoryFor/);
     assert.match(script, /finally/);
-    assert.doesNotMatch(script, /join\(fixtureRoot,\s*["']\.vibe-foundry["']/);
+    assert.doesNotMatch(script, /join\(fixtureRoot,\s*["']\.vibehub["']/);
     assert.doesNotMatch(script, /validate_plugin\.py/);
     assert.doesNotMatch(script, /C:\\\\Users\\/);
   });

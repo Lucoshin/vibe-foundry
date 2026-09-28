@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 
-import { canonicalSerialize } from "../preview/preview-action.js";
+import { canonicalSerialize } from "../utils/canonical-json.js";
 
 const fidelityStatuses = new Set([
   "calibrated",

@@ -12,7 +12,7 @@ import { writeAssetPackage } from "../dist/writers/asset-writer.js";
 const fixtureRoots = [];
 
 async function createFixtureProject() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-"));
   fixtureRoots.push(root);
   await Promise.all([
     mkdir(join(root, "src", "components"), { recursive: true }),
@@ -96,8 +96,8 @@ describe("distillProject", () => {
   });
 
   it("distills Vue components with mutually exclusive platform declarations and explicit analysis limits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-platform-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-platform-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(root, libraryRoot);
     await createMinimalFrontendProject(root, "platform-fixture");
     await writeFile(join(root, "src/components/Card.vue"), `<template><button>确认</button></template>
@@ -115,12 +115,12 @@ describe("distillProject", () => {
     const prompts = await readdir(join(result.outputDir, "component-prompts"));
     const texts = await Promise.all(prompts.filter((file) => file.endsWith(".json")).map((file) => readFile(join(result.outputDir, "component-prompts", file), "utf8")));
     assert.ok(texts.some((text) => text.includes("脚本解析")));
-    await assert.rejects(() => access(join(root, ".vibe-foundry")), { code: "ENOENT" });
+    await assert.rejects(() => access(join(root, ".vibehub")), { code: "ENOENT" });
   });
 
   it("writes the minimal asset package files for a project", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
 
     const result = await distillProject(root, {
@@ -129,7 +129,7 @@ describe("distillProject", () => {
     });
 
     assert.equal(result.outputDir, assetPackageDirectoryFor(libraryRoot, root));
-    await assert.rejects(() => access(join(root, ".vibe-foundry")), { code: "ENOENT" });
+    await assert.rejects(() => access(join(root, ".vibehub")), { code: "ENOENT" });
     const assetDir = result.outputDir;
 
     const manifest = JSON.parse(
@@ -147,10 +147,7 @@ describe("distillProject", () => {
     const previewCache = openPreviewBuildCache(assetDir);
     const actionRefs = previewCache.getActionRefs();
     previewCache.close();
-    const previewApp = await readFile(
-      join(assetDir, "preview-runtime", "src", "App.jsx"),
-      "utf8",
-    );
+    await assert.rejects(access(join(assetDir, "preview-runtime")), { code: "ENOENT" });
     assert.deepEqual(actionRefs, componentPreviews.previews.map((preview) => ({
       componentId: preview.id,
       actionDigest: preview.actionDigest,
@@ -204,7 +201,6 @@ describe("distillProject", () => {
     assert.deepEqual(componentPreviews.previews[0].limitations, ["missing-source-scenario"]);
     assert.match(componentPreviews.previews[0].browserUrl, /^\/component-preview\//);
     assert.equal("startCommand" in componentPreviews.previews[0], false);
-    assert.match(previewApp, /previewModules/);
     assert.equal(serviceCatalog.services[0].name, "auth.register");
     assert.equal(tokens.tokens.length, 4);
     assert.match(pagePatterns, /dashboard page/);
@@ -212,7 +208,7 @@ describe("distillProject", () => {
     assert.match(reuseReport, /# Reuse Report/);
     assert.match(reuseReport, /Button/);
     assert.match(reuseReport, /auth\.register/);
-    assert.match(agentRules, /# VibeFoundry Agent Rules/);
+    assert.match(agentRules, /# VibeHub Agent Rules/);
     assert.match(agentRules, /service-catalog\.json/);
     assert.ok(conceptAssets.conceptAssets.length >= 3);
     assert.ok(
@@ -228,18 +224,15 @@ describe("distillProject", () => {
   });
 
   it("requires an explicit generated asset directory from the orchestrator", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-writer-"));
-    fixtureRoots.push(root);
-
     await assert.rejects(
-      () => writeAssetPackage(root, {}),
+      () => writeAssetPackage({}),
       /writeAssetPackage requires options\.outputDir/,
     );
   });
 
   it("reuses unchanged source parsing and updates component prompts when source or styles change", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-prompt-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-prompt-library-"));
     fixtureRoots.push(libraryRoot);
     const componentPath = join(root, "src", "components", "Button.tsx");
     const componentSource = 'import "./Button.css"; export function Button() { return <button className="button">保存</button>; }\n';
@@ -281,7 +274,7 @@ describe("distillProject", () => {
 
   it("invalidates preview actions for nested styles and binary material bytes", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-material-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-material-library-"));
     fixtureRoots.push(libraryRoot);
     await writeFile(join(root, "src/components/Button.tsx"), 'import "./Button.css"; export function Button() { return <button>保存</button>; }\n');
     await writeFile(join(root, "src/components/Button.css"), '@import "./theme.css";\n');
@@ -314,7 +307,7 @@ describe("distillProject", () => {
 
   it("writes separate Unicode metaphor files matching the combined catalog", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
     await writeFile(join(root, "docs", "metaphors", "山海经.md"), "精卫填海，夸父逐日。\n");
     await writeFile(join(root, "docs", "metaphors", "道德经.md"), "道法自然。\n");
@@ -331,7 +324,7 @@ describe("distillProject", () => {
 
   it("rejects colliding metaphor filenames before changing any asset package files", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
     const { outputDir } = await distillProject(root, { assetLibraryRoot: libraryRoot });
     const manifestBefore = await readFile(join(outputDir, "asset-manifest.json"), "utf8");
@@ -351,7 +344,7 @@ describe("distillProject", () => {
 
   it("rejects duplicate source names before creating a new asset package", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
     await mkdir(join(root, "docs", "metaphors", "nested"));
     await writeFile(join(root, "docs", "metaphors", "nested", "memory-palace.md"), "A forge transforms materials.\n");
@@ -365,7 +358,7 @@ describe("distillProject", () => {
 
   it("removes obsolete generated metaphor JSON after redistillation without touching other files", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
     const { outputDir } = await distillProject(root, { assetLibraryRoot: libraryRoot });
     const packsDir = join(outputDir, "metaphor-packs");
@@ -388,8 +381,8 @@ describe("distillProject", () => {
 
   it("rejects a metaphor output directory redirected outside its asset package", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
-    const externalRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-external-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
+    const externalRoot = await mkdtemp(join(tmpdir(), "vibehub-external-"));
     fixtureRoots.push(libraryRoot, externalRoot);
     const outputDir = assetPackageDirectoryFor(libraryRoot, root);
     await mkdir(outputDir, { recursive: true });
@@ -406,8 +399,8 @@ describe("distillProject", () => {
   });
 
   it("includes Vue page files in structural page analysis", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-vue-pages-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-vue-pages-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(root, libraryRoot);
     await createMinimalFrontendProject(root, "vue-pages-fixture");
     await mkdir(join(root, "src", "pages"), { recursive: true });
@@ -428,7 +421,7 @@ describe("distillProject", () => {
 
   it("preserves static component previews when distilling again", async () => {
     const root = await createFixtureProject();
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(libraryRoot);
     const first = await distillProject(root, { assetLibraryRoot: libraryRoot });
     const firstRegistry = JSON.parse(
@@ -451,8 +444,8 @@ describe("distillProject", () => {
   });
 
   it("resolves an outer folder with one frontend package to the real project root", async () => {
-    const outerRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-outer-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const outerRoot = await mkdtemp(join(tmpdir(), "vibehub-outer-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(outerRoot, libraryRoot);
     const appRoot = join(outerRoot, "apps", "uni-app");
     await createMinimalFrontendProject(appRoot, "uni-app");
@@ -472,8 +465,8 @@ describe("distillProject", () => {
   });
 
   it("rejects an outer folder with multiple frontend package candidates", async () => {
-    const outerRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-outer-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+    const outerRoot = await mkdtemp(join(tmpdir(), "vibehub-outer-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-library-"));
     fixtureRoots.push(outerRoot, libraryRoot);
     await createMinimalFrontendProject(join(outerRoot, "apps", "first"), "first-app");
     await createMinimalFrontendProject(join(outerRoot, "apps", "second"), "second-app");
@@ -483,7 +476,7 @@ describe("distillProject", () => {
         generatedAt: "2026-07-08T00:00:00.000Z",
         assetLibraryRoot: libraryRoot,
       }),
-      /Multiple VibeFoundry project candidates/,
+      /Multiple VibeHub project candidates/,
     );
   });
 });

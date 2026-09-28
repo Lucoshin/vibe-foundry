@@ -22,7 +22,7 @@ const inheritedEnvironmentNames = [
 
 const controlledOverrideNames = new Set([
   "BROWSER",
-  "VIBE_FOUNDRY_PREVIEW_BASE",
+  "VIBEHUB_PREVIEW_BASE",
 ]);
 
 export function createSafeProcessEnvironment(hostEnvironment = process.env, overrides = {}) {

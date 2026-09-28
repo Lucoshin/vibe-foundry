@@ -49,6 +49,45 @@ function leaseFromRow(row) {
   };
 }
 
+// Reading runtime state must not initialize storage or migrate a historical cache.
+// Schema 1 and 2 share actions/validations; v2 adds action_refs for cache retention.
+export function openPreviewActionReader(databasePath) {
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true });
+  try {
+    database.pragma("trusted_schema = OFF");
+    const storedVersion = database.prepare(
+      "SELECT value FROM schema_metadata WHERE key = 'schema_version'",
+    ).pluck().get();
+    if (!["1", String(schemaVersion)].includes(storedVersion)) {
+      throw new Error(`Unsupported preview action store schema: ${storedVersion}`);
+    }
+    const getActionStatement = database.prepare(
+      "SELECT * FROM actions WHERE action_digest = ?",
+    );
+    const getValidationStatement = database.prepare(`
+      SELECT * FROM validations
+      WHERE artifact_tree_digest = ? AND validator_digest = ?
+    `);
+    return {
+      close() {
+        if (database.open) database.close();
+      },
+      getAction(actionDigest) {
+        assertDigest(actionDigest, "actionDigest");
+        return actionFromRow(getActionStatement.get(actionDigest));
+      },
+      getValidation(artifactTreeDigest, validatorDigest) {
+        assertDigest(artifactTreeDigest, "artifactTreeDigest");
+        assertDigest(validatorDigest, "validatorDigest");
+        return validationFromRow(getValidationStatement.get(artifactTreeDigest, validatorDigest));
+      },
+    };
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
 export function openPreviewActionStore(databasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new Database(databasePath);

@@ -139,4 +139,47 @@ describe("component design descriptions", () => {
     const {prompt}=describeEvidence(".card { outline:1px solid #123456; }");
     assert.match(prompt,/外轮廓/); assert.doesNotMatch(prompt,/焦点外轮廓/);
   });
+  it("keeps static transforms in visual appearance rather than inventing motion", () => {
+    const {prompt}=describeEvidence('.card { transform:rotate(12deg); }');
+    assert.match(prompt.split('## 视觉\n')[1].split('## 动效')[0], /静态变换.*旋转 12deg/);
+    assert.match(prompt.split('## 动效\n')[1].split('## 交互')[0], /未确认具体动效/);
+    assert.match(prompt, /源码.*静态|静态.*源码/);
+    assert.match(prompt, /未.*实机|未经.*实机/);
+  });
+  it("does not use a var fallback when an existing variable has ambiguous cascade", () => {
+    const result=describeEvidence('',[node()],{styles:[
+      {sourceFile:'a.css',css:'.card { --accent:#111111; color:var(--accent, #abcdef); }'},
+      {sourceFile:'b.css',css:'.card { --accent:#222222; }'}
+    ]});
+    assert.doesNotMatch(result.prompt, /#abcdef|#111111|#222222/);
+    assert.ok(result.unresolved.some(item=>/变量.*冲突|冲突.*变量/.test(item)));
+    assert.match(result.prompt, /待核对.*变量|变量.*待核对/);
+  });
+  it("pairs repeated animation longhand lists to each named animation and preserves paused state", () => {
+    const {prompt}=describeEvidence('@keyframes fade { from { opacity:0; } to { opacity:1; } } @keyframes turn { to { transform:rotate(90deg); } } .card { animation-name:fade, turn; animation-duration:1s, 3s; animation-delay:-.5s; animation-iteration-count:2, infinite; animation-play-state:paused, running; }');
+    assert.match(prompt, /每轮 1s.*播放 2 次.*暂停.*起点：不透明度 0/);
+    assert.match(prompt, /每轮 3s.*无限循环.*90deg/);
+    assert.equal((prompt.match(/提前进入动画进度 \.5s/g)||[]).length,2);
+    assert.doesNotMatch(prompt, /每轮 1s, 3s|播放 2, infinite/);
+  });
+  it("does not retain overridden shorthand timing when a longhand is also declared", () => {
+    const result=describeEvidence('@keyframes fade { to { opacity:1; } } .card { animation:fade 2s linear; animation-duration:7s; }');
+    assert.doesNotMatch(result.prompt, /每轮 2s/);
+    assert.ok(result.unresolved.some(item=>/动画.*简写|简写.*动画/.test(item)));
+  });
+  it("does not replace ambiguous animation timing with a zero-duration default", () => {
+    const result=describeEvidence('',[node()],{styles:[
+      {sourceFile:'a.css',css:'@keyframes fade { to { opacity:1; } } .card { animation-name:fade; animation-duration:1s; }'},
+      {sourceFile:'b.css',css:'.card { animation-duration:2s; }'}
+    ]});
+    assert.doesNotMatch(result.prompt,/关键帧动画每轮/);
+    assert.ok(result.unresolved.some(item=>/动画.*参数|参数.*动画/.test(item)));
+  });
+  it("retains unknown interaction feedback in the copied prompt without asserting business behavior", () => {
+    const {prompt}=describeEvidence('.card:hover { opacity:.6; }',[node({tag:'button',events:['click']})]);
+    assert.match(prompt,/悬停时/);
+    assert.match(prompt,/源码.*状态.*实际触发|实际触发.*待核对/);
+    assert.match(prompt,/事件绑定只能确认操作入口/);
+    assert.doesNotMatch(prompt,/点击.*成功|点击.*弹窗/);
+  });
 });

@@ -9,11 +9,11 @@ import * as assetLibrary from "../../dist/library/asset-library.js";
 const { assetPackageDirectoryFor, registerAssetPackage } = assetLibrary;
 
 const roots = [];
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
 async function createLibraryRoot() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-library-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-library-"));
   roots.push(root);
   return root;
 }
@@ -22,16 +22,16 @@ describe("asset library", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
     if (originalLibraryRoot === undefined) {
-      delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+      delete process.env.VIBEHUB_LIBRARY_ROOT;
     } else {
-      process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+      process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
     }
     Object.defineProperty(process, "platform", originalPlatformDescriptor);
   });
 
   it("resolves an explicit root before the environment and user-home default", () => {
     assert.equal(typeof assetLibrary.resolveAssetLibraryRoot, "function");
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = join(tmpdir(), "environment-library");
+    process.env.VIBEHUB_LIBRARY_ROOT = join(tmpdir(), "environment-library");
 
     assert.equal(
       assetLibrary.resolveAssetLibraryRoot(join(tmpdir(), "explicit-library")),
@@ -41,7 +41,7 @@ describe("asset library", () => {
 
   it("resolves the environment root before the user-home default", () => {
     assert.equal(typeof assetLibrary.resolveAssetLibraryRoot, "function");
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = join(tmpdir(), "environment-library");
+    process.env.VIBEHUB_LIBRARY_ROOT = join(tmpdir(), "environment-library");
 
     assert.equal(
       assetLibrary.resolveAssetLibraryRoot(),
@@ -51,11 +51,11 @@ describe("asset library", () => {
 
   it("defaults to the current user's cross-platform library directory", () => {
     assert.equal(typeof assetLibrary.resolveAssetLibraryRoot, "function");
-    delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+    delete process.env.VIBEHUB_LIBRARY_ROOT;
 
     assert.equal(
       assetLibrary.resolveAssetLibraryRoot(),
-      join(homedir(), ".vibe-foundry", "library"),
+      join(homedir(), ".vibehub", "library"),
     );
   });
 
@@ -67,11 +67,11 @@ describe("asset library", () => {
   });
 
   it("treats a whitespace-only environment root as unset", () => {
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = "  \t  ";
+    process.env.VIBEHUB_LIBRARY_ROOT = "  \t  ";
 
     assert.equal(
       assetLibrary.resolveAssetLibraryRoot(),
-      join(homedir(), ".vibe-foundry", "library"),
+      join(homedir(), ".vibehub", "library"),
     );
   });
 

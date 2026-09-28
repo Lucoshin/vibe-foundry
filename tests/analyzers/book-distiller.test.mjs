@@ -7,15 +7,15 @@ import { afterEach, describe, it } from "node:test";
 import { analyzeBookText, distillBook } from "../../dist/analyzers/book-distiller.js";
 
 const roots = [];
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 
 describe("analyzeBookText", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
     if (originalLibraryRoot === undefined) {
-      delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+      delete process.env.VIBEHUB_LIBRARY_ROOT;
     } else {
-      process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+      process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
     }
   });
 
@@ -110,13 +110,13 @@ describe("analyzeBookText", () => {
 
   it("writes books below the shared environment library root", async () => {
     const source = await readFile("src/analyzers/book-distiller.ts", "utf8");
-    assert.doesNotMatch(source, /D:\\\\VibeFoundry/);
-    const inputRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-book-source-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-book-library-"));
+    assert.doesNotMatch(source, /D:\\\\VibeHub/);
+    const inputRoot = await mkdtemp(join(tmpdir(), "vibehub-book-source-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-book-library-"));
     roots.push(inputRoot, libraryRoot);
     const bookPath = join(inputRoot, "测试书.md");
     await writeFile(bookPath, "第一章 形式系统\n形式系统包含符号和规则。\n");
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+    process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
 
     const result = await distillBook(bookPath);
 
@@ -130,13 +130,13 @@ describe("analyzeBookText", () => {
   });
 
   it("keeps outputDir as the exact final book directory override", async () => {
-    const inputRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-book-source-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-book-library-"));
+    const inputRoot = await mkdtemp(join(tmpdir(), "vibehub-book-source-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-book-library-"));
     const outputDir = join(inputRoot, "exact-book-output");
     roots.push(inputRoot, libraryRoot);
     const bookPath = join(inputRoot, "book.md");
     await writeFile(bookPath, "Chapter 1 Meaning\nMeaning depends on interpretation.\n");
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+    process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
 
     const result = await distillBook(bookPath, { outputDir });
 
@@ -144,7 +144,7 @@ describe("analyzeBookText", () => {
   });
 
   it("does not downgrade knowledge assets and leave stale semantic cards behind", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-book-mode-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-book-mode-"));
     roots.push(root);
     const bookPath = join(root, "book.md");
     await writeFile(bookPath, "第一章 形式系统\n形式系统。\n");

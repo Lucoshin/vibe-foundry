@@ -9,7 +9,7 @@ import { analyzeServices } from "../../dist/analyzers/service-analyzer.js";
 const fixtureRoots = [];
 
 async function createServiceFixture() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-services-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-services-"));
   fixtureRoots.push(root);
   await mkdir(join(root, "src", "app", "api", "auth", "register"), {
     recursive: true,

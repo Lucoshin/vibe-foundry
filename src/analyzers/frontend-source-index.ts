@@ -201,17 +201,43 @@ function parseJavaScriptSource(sourceText, filePath, options = {}) {
       if (call) componentCalls.push(call);
     }
   });
-  return { imports, exports, componentCalls, dependencies: [...dependencies] };
+  return { imports, exports, componentCalls, dependencies: [...dependencies],
+    staticData: options.vueOptions ? vueOptionsData(ast.program) : new Map() };
+}
+
+function vueOptionsData(program) {
+  const bindings = new Map();
+  const declaration = program.body.find((node) => node.type === "ExportDefaultDeclaration")?.declaration;
+  if (declaration?.type !== "ObjectExpression"
+    || declaration.properties.some((property) => property.type === "SpreadElement" || property.computed)) return bindings;
+  const dataProperties = declaration.properties.filter((property) => (property.key?.name ?? property.key?.value) === "data");
+  if (dataProperties.length !== 1) return bindings;
+  const data = dataProperties[0];
+  if (data.type !== "ObjectMethod" || data.kind !== "method" || data.async || data.generator || data.params.length
+    || data.body.body.length !== 1 || data.body.body[0].type !== "ReturnStatement") return bindings;
+  const returned = data.body.body[0].argument;
+  if (returned?.type !== "ObjectExpression"
+    || returned.properties.some((property) => property.type !== "ObjectProperty" || property.computed)) return bindings;
+  for (const property of returned.properties) {
+    const key = property.key.name ?? property.key.value;
+    if (typeof key !== "string") continue;
+    const value = staticJavaScriptValue(property.value);
+    bindings.delete(key);
+    if (value.resolved) bindings.set(key, value);
+  }
+  return bindings;
 }
 
 function vueStaticArgument(argument) {
   return argument?.type === NodeTypes.SIMPLE_EXPRESSION && argument.isStatic ? argument.content : "";
 }
 
-function staticVueExpression(content) {
+function staticVueExpression(content, staticData) {
   try {
     const ast = parseJavaScript(`(${content})`, { sourceType: "module", plugins: ["typescript"] });
-    return staticJavaScriptValue(ast.program.body[0]?.expression);
+    const expression = ast.program.body[0]?.expression;
+    return expression?.type === "Identifier" && staticData?.has(expression.name)
+      ? staticData.get(expression.name) : staticJavaScriptValue(expression);
   } catch {
     return { resolved: false };
   }
@@ -229,15 +255,16 @@ function vueSlotInfo(children = []) {
   return { slots: text ? { default: text } : {}, unresolvedSlots };
 }
 
-function vueComponentCalls(template, templateLocation) {
+function vueComponentCalls(template, templateLocation, staticData) {
   if (!template.trim()) return [];
   const ast = parseVueTemplate(template, {
     comments: false,
     isVoidTag: (tag) => vueVoidTags.has(tag),
   });
   const calls = [];
-  const visit = (node) => {
+  const visit = (node, scoped = false) => {
     if (node.type === NodeTypes.ELEMENT) {
+      scoped ||= node.props.some((property) => property.type === NodeTypes.DIRECTIVE && ["for", "slot"].includes(property.name));
       const localName = node.tag;
       if (node.tagType === 1) {
         const attributes = [];
@@ -250,7 +277,7 @@ function vueComponentCalls(template, templateLocation) {
             if (property.name === "on") {
               if (name) events.push(name);
             } else if (property.name === "bind" && name) {
-              const result = staticVueExpression(property.exp?.content ?? "");
+              const result = staticVueExpression(property.exp?.content ?? "", scoped ? undefined : staticData);
               attributes.push(result.resolved ? { name, value: result.value } : { name, dynamic: true });
             } else if (property.name === "bind" && !property.arg && property.exp) {
               attributes.push({ name: `spread:${property.exp.content}`, dynamic: true });
@@ -271,9 +298,9 @@ function vueComponentCalls(template, templateLocation) {
           },
         });
       }
-      for (const child of node.children ?? []) visit(child);
+      for (const child of node.children ?? []) visit(child, scoped);
     } else {
-      for (const child of node.children ?? []) visit(child);
+      for (const child of node.children ?? []) visit(child, scoped);
     }
   };
   visit(ast);
@@ -284,13 +311,15 @@ function parseVueSource(sourceText, filePath) {
   const { descriptor } = parseVueSfc(sourceText, { filename: filePath });
   const scripts = [descriptor.script, descriptor.scriptSetup]
     .filter(Boolean)
-    .map((script) => parseJavaScriptSource(script.content, filePath, { typescript: script.lang === "ts" }));
+    .map((script) => parseJavaScriptSource(script.content, filePath, {
+      typescript: script.lang === "ts", vueOptions: script === descriptor.script && !descriptor.scriptSetup,
+    }));
   return {
     imports: scripts.flatMap((script) => script.imports),
     exports: scripts.flatMap((script) => script.exports),
     dependencies: [...new Set(scripts.flatMap((script) => script.dependencies))],
     componentCalls: descriptor.template
-      ? vueComponentCalls(descriptor.template.content, descriptor.template.loc.start)
+      ? vueComponentCalls(descriptor.template.content, descriptor.template.loc.start, scripts[0]?.staticData)
       : [],
     styles: descriptor.styles.map((style) => ({ lang: style.lang ?? "css", scoped: style.scoped })),
   };

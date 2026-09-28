@@ -11,6 +11,7 @@ describe("asset package schema", () => {
   it("accepts the universal asset kinds needed by the roadmap", () => {
     assert.deepEqual(AssetKindSchema.options, [
       "component",
+      "page",
       "service",
       "business-pattern",
       "page-pattern",
@@ -34,6 +35,7 @@ describe("asset package schema", () => {
     const parsed = AssetPackageSchema.parse(assetPackage);
 
     assert.deepEqual(parsed.assetCounts, {
+      pages: 0,
       components: 0,
       services: 0,
       businessPatterns: 0,

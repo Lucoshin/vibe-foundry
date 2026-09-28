@@ -149,5 +149,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); 
   .preview-workbench, .detail-card { padding: 24px 20px; } .preview-workbench-head { align-items: flex-start; flex-direction: column; }
   .preview-stage { height: calc(var(--preview-canvas-height) + 18px); min-height: 378px; padding: 8px; } .component-controls { gap: 12px; } .control-select { min-width: 90px; max-width: 170px; }
 }
+.asset-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-bottom: 16px; font-size: 13px; }
+.asset-pagination[hidden] { display: none; }
+.asset-pagination button { padding: 6px 10px; cursor: pointer; }
+.asset-pagination button:disabled { cursor: default; opacity: .45; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
 `;

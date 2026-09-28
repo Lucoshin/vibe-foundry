@@ -4,8 +4,12 @@ import { join, resolve } from "node:path";
 
 import { summarizeBusinessPatterns } from "./analyzers/business-pattern-summarizer.js";
 import { analyzeComponents } from "./analyzers/component-analyzer.js";
+import { deduplicateComponents } from './analyzers/component-deduplication.js';
+import { hasDeclaredComponentInterface } from './analyzers/component-selection.js';
+import { analyzeProjectPages } from "./analyzers/project-page-analyzer.js";
 import { buildFrontendSourceIndex } from "./analyzers/frontend-source-index.js";
 import { buildComponentPrompts } from "./analyzers/component-prompt.js";
+import { collectUniStaticResources } from './preview/uni-static-resources.js';
 import { distillMetaphorPacks } from "./analyzers/metaphor-distiller.js";
 import { summarizePagePatterns } from "./analyzers/page-pattern-summarizer.js";
 import { analyzeProductPatterns } from "./analyzers/product-pattern-analyzer.js";
@@ -20,6 +24,7 @@ import { scanProject } from "./scanner/project-scanner.js";
 import { listProjectFiles, readTextFile } from "./utils/files.js";
 import { validateMetaphorOutput, writeAssetPackage } from "./writers/asset-writer.js";
 import { assetPackageDirectoryFor, registerAssetPackage, resolveAssetLibraryRoot } from "./library/asset-library.js";
+import { getRecipe } from "./learning/recipes.js";
 
 export { analyzeBookText, distillBook } from "./analyzers/book-distiller.js";
 
@@ -58,7 +63,7 @@ async function findDistillableProjectRoots(root, depth = 0) {
   }
   const ignoredDirectories = new Set([
     ".git",
-    ".vibe-foundry",
+    ".vibehub",
     "dist",
     "build",
     "coverage",
@@ -95,12 +100,12 @@ async function resolveDistillProjectRoot(projectRoot) {
   }
   if (candidates.length > 1) {
     throw new Error([
-      `Multiple VibeFoundry project candidates found under ${resolvedRoot}.`,
+      `Multiple VibeHub project candidates found under ${resolvedRoot}.`,
       "Pass one concrete project root:",
       ...candidates.map((candidate) => `- ${candidate}`),
     ].join("\n"));
   }
-  throw new Error(`No package.json found for VibeFoundry distill target: ${resolvedRoot}`);
+  throw new Error(`No package.json found for VibeHub distill target: ${resolvedRoot}`);
 }
 
 export async function distillProject(projectRoot, options = {}) {
@@ -108,6 +113,8 @@ export async function distillProject(projectRoot, options = {}) {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const scan = await scanProject(resolvedRoot);
   const libraryRoot = resolveAssetLibraryRoot(options.assetLibraryRoot);
+  const recipe = await getRecipe(libraryRoot, options.recipeId ?? 'component-distillation', options.recipeVersion);
+  if (!recipe.sourceKinds.includes('project')) throw new Error('工程炼化必须选择适用于 project 的工程方案。');
   const outputDir = assetPackageDirectoryFor(libraryRoot, resolvedRoot);
   const metaphorSourceFiles = await listProjectFiles(resolvedRoot, ["docs/metaphors"], [".md", ".mdx", ".txt"]);
   const metaphorSources = await Promise.all(metaphorSourceFiles.map(async (file) => ({
@@ -121,32 +128,75 @@ export async function distillProject(projectRoot, options = {}) {
   const sourceDirs = [...new Set([...scan.sourceDirs, ...scan.componentDirs, ...scan.pageDirs])]
     .filter((directory, _index, directories) => !directories.some((parent) => parent !== directory && directory.startsWith(`${parent}/`)));
   const sourceIndex = await buildFrontendSourceIndex(resolvedRoot, sourceDirs, { cacheDir: join(outputDir, "analysis-cache") });
+  const discoveredPages = await analyzeProjectPages(resolvedRoot, { sourceIndex });
+  const registeredPages = recipe.includePages === true ? discoveredPages : [];
   const sourceTexts = new Map(sourceIndex.files.map((file) => [file.filePath, file.sourceText]));
   const readSource = (file) => {
     if (!sourceTexts.has(file.filePath)) sourceTexts.set(file.filePath, readTextFile(file.fullPath));
     return sourceTexts.get(file.filePath);
   };
-  const components = await analyzeComponents(
+  const unregisteredPageFiles = recipe.includePages === true && scan.framework === 'uni-app'
+    ? sourceIndex.files.filter(file => /^src\/pages[^/]*\/.*\.vue$/.test(file.filePath)
+      && !registeredPages.some(page => page.filePath === file.filePath)).map(file => file.filePath) : [];
+  const pageCandidateDirs = [...new Set(unregisteredPageFiles.map(filePath => filePath.split('/').slice(0, 2).join('/')))];
+  const componentSelection = [];
+  const componentCandidates = await analyzeComponents(
     resolvedRoot,
-    scan.componentDirs,
+    [...scan.componentDirs, ...pageCandidateDirs],
     scan.sourceDirs.length > 0 ? scan.sourceDirs : [...scan.pageDirs, ...scan.componentDirs],
-    { sourceIndex },
+    { sourceIndex, componentRules: recipe.componentRules, selectionDecisions: componentSelection },
   );
+  const registeredPagePaths = new Set(discoveredPages.map(page => page.filePath));
+  const unregisteredPagePaths = new Set(unregisteredPageFiles);
+  const selectedComponents = [...new Map(componentCandidates.filter(component => !registeredPagePaths.has(component.filePath)
+    && (!/^src\/(views|layout)\//.test(component.filePath) || component.filePath.endsWith('.vue'))
+    && (!pageCandidateDirs.some(directory => component.filePath.startsWith(`${directory}/`)) || unregisteredPagePaths.has(component.filePath)))
+    .map(component => [component.filePath, unregisteredPagePaths.has(component.filePath) ? {
+      ...component, limitations: ['此 Vue 位于页面源码目录但未注册，按组件候选提炼；不存在已证明的页面访问路由。'],
+    } : component.filePath.startsWith('src/views/') ? {
+      ...component, limitations: ['此视图未识别到静态页面路由，按组件候选提炼；后台菜单注册与完整页面访问条件尚未验证。'],
+    } : component])).values()];
+  const focusedComponents = selectedComponents.filter(component => {
+    const viewEntry = unregisteredPagePaths.has(component.filePath) || component.filePath.startsWith('src/views/');
+    const componentDirectory = /(?:^|\/)components?\//.test(component.filePath);
+    if (recipe.componentRules.viewEntries === 'context-only' && viewEntry && !componentDirectory && component.scenarios.length === 0
+      && !hasDeclaredComponentInterface(component.filePath, sourceTexts.get(component.filePath))) {
+      componentSelection.push({filePath:component.filePath,name:component.name,decision:'context-only',rule:'viewEntries'});
+      return false;
+    }
+    return true;
+  });
+  const components = deduplicateComponents(focusedComponents, sourceIndex, recipe.componentRules.duplicates);
+  for (const component of components) for (const duplicate of component.duplicateSources ?? []) {
+    componentSelection.push({filePath:duplicate.filePath,name:duplicate.name,decision:'merge',rule:'duplicates',canonicalFilePath:component.filePath});
+  }
+  const pageSourcesForPreview = await analyzeComponents(resolvedRoot, [], sourceDirs, {
+    sourceIndex, filePaths: registeredPages.map(page => page.filePath),
+  });
+  const pageRuntimeByPath = new Map(pageSourcesForPreview.map(page => [page.filePath, page]));
+  const pages = registeredPages.map(page => ({ ...pageRuntimeByPath.get(page.filePath), ...page }));
+  const previewSources = [...components, ...pages];
+  for (const component of previewSources) {
+    if (component.platformRuntime !== 'uni-h5') continue;
+    const collected = await collectUniStaticResources(resolvedRoot, component, sourceIndex);
+    component.staticResources = collected.resources;
+    component.staticResourceLimitations = collected.limitations;
+  }
   const runtimeContext = await discoverPreviewRuntimeContext(resolvedRoot, { sourceIndex });
   const services = await analyzeServices(resolvedRoot, scan.apiDirs, scan.serviceDirs);
   const tokens = await extractTokens(resolvedRoot, [
     ...scan.componentDirs,
     ...scan.pageDirs,
   ], { sourceIndex });
-  const componentPrompts = await buildComponentPrompts(resolvedRoot, components, { sourceIndex, runtimeContext, tokens });
+  const componentPrompts = await buildComponentPrompts(resolvedRoot, previewSources, { sourceIndex, runtimeContext, tokens, recipe });
   const promptByPath = new Map(componentPrompts.map((record) => [record.filePath, record]));
-  for (const component of components) {
+  for (const component of previewSources) {
     component.dependencyFingerprint = createHash("sha256").update(JSON.stringify({
       sourceDependencies: component.dependencyFingerprint,
       sourceMaterials: promptByPath.get(component.filePath).sourceDigest,
     })).digest("hex");
   }
-  const componentPreviewRegistry = buildComponentPreviewRegistry(components, {
+  const componentPreviewRegistry = buildComponentPreviewRegistry(previewSources, {
     projectRoot: resolvedRoot,
     generatedAt,
     runtimeContext,
@@ -186,6 +236,8 @@ export async function distillProject(projectRoot, options = {}) {
     hasBackendEntrypoints: scan.hasBackendEntrypoints,
   });
   assetPackage.components = components;
+  assetPackage.componentSelection = componentSelection;
+  assetPackage.pages = pages;
   assetPackage.services = services;
   assetPackage.businessPatterns = businessPatterns;
   assetPackage.tokens = tokens;
@@ -194,6 +246,7 @@ export async function distillProject(projectRoot, options = {}) {
   assetPackage.metaphorPacks = metaphorPacks;
   assetPackage.componentPreviews = componentPreviewRegistry.previews;
   assetPackage.assetCounts.components = components.length;
+  assetPackage.assetCounts.pages = pages.length;
   assetPackage.assetCounts.componentPreviews = componentPreviewRegistry.previews.length;
   assetPackage.assetCounts.services = services.length;
   assetPackage.assetCounts.businessPatterns = businessPatterns.length;
@@ -202,12 +255,12 @@ export async function distillProject(projectRoot, options = {}) {
   assetPackage.assetCounts.conceptAssets = conceptAssets.length;
   assetPackage.assetCounts.metaphorPacks = metaphorPacks.length;
 
-  const result = await writeAssetPackage(resolvedRoot, assetPackage, { componentPreviewRegistry, componentPrompts, sourceIndex, outputDir });
+  const result = await writeAssetPackage(assetPackage, { componentPreviewRegistry, componentPrompts, outputDir, componentRecipe: recipe });
   await registerAssetPackage(libraryRoot, {
     projectRoot: resolvedRoot,
     sourceProject: assetPackage.sourceProject,
     assetPackageDir: outputDir,
     generatedAt,
   });
-  return { ...result, analysis: sourceIndex.metrics };
+  return { ...result, analysis: sourceIndex.metrics, recipe: { id: recipe.id, version: recipe.version, name: recipe.name, digest: recipe.digest } };
 }

@@ -17,7 +17,7 @@ async function readDocument(bookPath) {
 function readingTask(document) {
   return `# 从《${document.title}》炼化知识资产
 
-这是分块阅读任务，目前语义分析未完成。请阅读本工作目录的 document.json 和全部 chunks 文件，生成 analysis.json，再交给 VibeFoundry 校验导入。
+这是分块阅读任务，目前语义分析未完成。请阅读本工作目录的 document.json 和全部 chunks 文件，生成 analysis.json，再交给 VibeHub 校验导入。
 
 ## 工作顺序
 

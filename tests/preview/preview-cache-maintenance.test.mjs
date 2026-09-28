@@ -15,9 +15,9 @@ describe("preview cache maintenance", () => {
   });
 
   it("keeps current action artifacts and sweeps old unreferenced content", async () => {
-    const assetDir = await mkdtemp(join(tmpdir(), "vibe-foundry-gc-assets-"));
-    const oldOutput = await mkdtemp(join(tmpdir(), "vibe-foundry-gc-old-"));
-    const currentOutput = await mkdtemp(join(tmpdir(), "vibe-foundry-gc-current-"));
+    const assetDir = await mkdtemp(join(tmpdir(), "vibehub-gc-assets-"));
+    const oldOutput = await mkdtemp(join(tmpdir(), "vibehub-gc-old-"));
+    const currentOutput = await mkdtemp(join(tmpdir(), "vibehub-gc-current-"));
     roots.push(assetDir, oldOutput, currentOutput);
     await mkdir(oldOutput, { recursive: true });
     await mkdir(currentOutput, { recursive: true });

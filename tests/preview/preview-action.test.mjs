@@ -1,8 +1,8 @@
+import { canonicalSerialize } from "../../dist/utils/canonical-json.js";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  canonicalSerialize,
   createPreviewActionSpec,
   previewActionDigest,
 } from "../../dist/preview/preview-action.js";

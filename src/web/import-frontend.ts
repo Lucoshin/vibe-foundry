@@ -23,6 +23,10 @@ export const importCss = `
 #import-kind-help { margin: 16px 0 0; font-size: 12px; }
 #import-status { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; margin-top: 16px; font-size: 13px; }
 #import-task-name { overflow-wrap: anywhere; }
+.import-recipe-field { display: grid; gap: 8px; margin-top: 16px; font-size: 13px; }
+.import-recipe-field[hidden] { display: none; }
+.import-recipe-field select { max-width: 100%; padding: 8px; font: inherit; }
+#import-recipe-help { color: var(--muted); }
 #import-output { overflow-wrap: anywhere; margin: 20px 0; font-size: 12px; }
 #import-results pre { max-height: 35vh; overflow-y: auto; }
 #import-last-task { margin-top: 16px; font-size: 12px; border: 0; color: var(--muted); }
@@ -38,12 +42,14 @@ export const importHtml = `
     <div class="import-shortcuts"><button id="import-up" type="button">↑ 上一级</button><button id="import-home" type="button">用户目录</button><button id="import-workspace" type="button">工作目录</button><button id="import-folder" type="button">选择当前文件夹</button></div>
     <div id="import-files" class="import-files" aria-label="本地文件和文件夹"></div>
     <p id="import-kind-help"></p>
+    <div id="import-recipe-field" class="import-recipe-field" hidden><label for="import-recipe">工程炼化方案</label><select id="import-recipe" aria-describedby="import-recipe-help"></select><small id="import-recipe-help"></small></div>
     <div class="import-footer"><div id="import-selection" class="import-selection">尚未选择</div><button id="import-start" class="import-primary" type="button" disabled>开始炼化</button></div>
     <button id="import-last-task" type="button" hidden>查看上次任务</button>
   </section>
   <section id="import-task-step" hidden>
     <h3 id="import-task-name"></h3>
     <p id="import-task-path"></p>
+    <p id="import-task-recipe"></p>
     <p id="import-output"></p>
     <div id="import-results" hidden><button id="import-report" type="button">查看报告</button> <button id="import-download" type="button">下载资产 JSON</button><pre id="import-report-content" hidden></pre></div>
     <div class="import-footer"><button id="import-new" type="button">继续导入</button><button id="import-view-assets" class="import-primary" type="button" hidden>查看资产</button></div>
@@ -64,6 +70,32 @@ export const importJs = `
   let lastCompleted = null;
   let lastJob = null;
   let taskView = false;
+  let recipes = [];
+  let recipesLoading = false;
+  let recipeEpoch = 0;
+  function selectedRecipe() { return recipes.find(recipe => recipe.id === get('import-recipe').value); }
+  async function loadRecipes() {
+    const epoch = ++recipeEpoch;
+    recipesLoading = true;updateControls();get('import-recipe-help').textContent = '正在读取工程方案…';
+    try {
+      const response = await fetch('/api/learning/recipes', { headers: { 'x-vibe-import-token': token } });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      if (epoch !== recipeEpoch) return;
+      const selected = get('import-recipe').value;
+      recipes = result.filter(recipe => recipe.sourceKinds.includes('project'));
+      get('import-recipe').replaceChildren();
+      const placeholder = document.createElement('option');placeholder.value = '';placeholder.textContent = '选择工程方案';get('import-recipe').append(placeholder);
+      for (const recipe of recipes) {
+        const option = document.createElement('option');option.value = recipe.id;option.textContent = recipe.name + ' · v' + recipe.version;get('import-recipe').append(option);
+      }
+      get('import-recipe').value = recipes.some(recipe => recipe.id === selected) ? selected : recipes.some(recipe => recipe.id === 'component-distillation') ? 'component-distillation' : '';
+      get('import-recipe-help').textContent = recipes.length ? '本次使用所选版本。可在现有“炼化方案”中保存个人要求，再重新打开此面板选择。' : '没有可用的工程方案，请先在炼化方案中创建。';
+    } catch (error) {
+      if (epoch !== recipeEpoch) return;
+      recipes = [];get('import-recipe').replaceChildren();get('import-recipe-help').textContent = '方案读取失败：' + error.message;
+    } finally { if (epoch === recipeEpoch) { recipesLoading = false;updateControls(); } }
+  }
   async function request(route, body) {
     const response = await fetch('/api/import/' + route, {
       method: body === undefined ? 'GET' : 'POST',
@@ -89,6 +121,7 @@ export const importJs = `
     get('import-title').textContent = job.state === 'running' ? '正在炼化' : job.state === 'succeeded' ? '炼化完成' : '炼化未完成';
     get('import-task-name').textContent = job.name;
     get('import-task-path').textContent = job.sourcePath || '';
+    get('import-task-recipe').textContent = job.recipe ? '炼化方案：' + job.recipe.name + ' · v' + job.recipe.version : '';
     get('import-output').textContent = job.state === 'succeeded' ? '已保存至：' + job.outputDir : '';
     get('import-new').disabled = job.state === 'running';
     get('import-new').textContent = job.state === 'failed' ? '重新选择' : '继续导入';
@@ -97,7 +130,10 @@ export const importJs = `
     message(job.message);
   }
   function updateControls() {
-    get('import-start').disabled = running || browsing || !selection;
+    const project = selection?.kind === 'directory';
+    get('import-start').disabled = running || browsing || !selection || project && (recipesLoading || !selectedRecipe());
+    get('import-recipe-field').hidden = !project;
+    get('import-recipe').disabled = running || recipesLoading;
     get('import-folder').disabled = running || browsing || !listing;
     get('import-up').disabled = browsing || !listing || listing.parent === listing.path;
     get('import-home').disabled = browsing || !listing;
@@ -164,8 +200,7 @@ export const importJs = `
   document.querySelectorAll('[data-open-import]').forEach(button => button.addEventListener('click', async () => {
     showSelection();
     dialog.showModal();
-    if (!listing) await browse();
-    await poll();
+    await Promise.all([!listing ? browse() : Promise.resolve(), poll(), running ? Promise.resolve() : loadRecipes()]);
     if (running && lastJob) showTask(lastJob);
   }));
   get('import-last-task').addEventListener('click', () => { if (lastJob) showTask(lastJob); });
@@ -183,13 +218,16 @@ export const importJs = `
   get('import-home').addEventListener('click', () => browse(listing.home));
   get('import-workspace').addEventListener('click', () => browse(listing.initialDirectory));
   get('import-folder').addEventListener('click', () => select({ path: listing.path, kind: 'directory' }));
+  get('import-recipe').addEventListener('change', updateControls);
   get('import-start').addEventListener('click', async () => {
-    if (running || !selection) return;
+    if (get('import-start').disabled || running || !selection) return;
+    const recipe = selection.kind === 'directory' ? selectedRecipe() : null;
+    const input = { path: selection.path, ...(recipe ? {recipeId:recipe.id,recipeVersion:recipe.version} : {}) };
     running = true; updateControls();
     get('import-results').hidden = true;
     get('import-report-content').hidden = true;
     message('正在启动炼化…');
-    try { const job = await request('start', { path: selection.path }).then(response => response.json()); lastJob = job; showTask(job); await poll(); }
+    try { const job = await request('start', input).then(response => response.json()); lastJob = job; showTask(job); await poll(); }
     catch (error) { running = false; updateControls(); message('启动失败：' + error.message); }
   });
   get('import-report').addEventListener('click', async () => {

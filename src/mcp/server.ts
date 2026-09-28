@@ -1,3 +1,9 @@
+import { loadAssetLibraryViewModel, queryAssets } from "../application/asset-catalog.js";
+import { createTaskContext } from "../application/task-context.js";
+import {getLearningMemory} from '../learning/memory.js';
+import {getCreatorTask} from '../learning/creators.js';
+import {listPrompts,getPrompt,renderPrompt} from '../prompts/workflow.js';
+import {listKnowledgeCollections,getKnowledgeCollection,exploreAssetRelations} from '../application/knowledge-collections.js';
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,9 +15,34 @@ import {
 } from "../library/asset-library.js";
 
 const toolDefinitions = [
+  ...[
+    ['list_prompts','List immutable reusable prompt versions and read errors.',{},[]],
+    ['get_prompt','Read one exact reusable prompt version.',{id:{type:'string'},revision:{type:'string'}},['id','revision']],
+    ['render_prompt','Render declared template variables once without executing a model.',{id:{type:'string'},revision:{type:'string'},values:{type:'object',additionalProperties:{type:'string'}}},['id','revision','values']],
+    ['list_knowledge_collections','List manually maintained asset reference collections.',{},[]],
+    ['get_knowledge_collection','Read exact collection members including missing references.',{id:{type:'string'}},['id']],
+    ['explore_asset_relations','Read existing evidenced one-hop relations without inferring links.',{assetIds:{type:'array',items:{type:'string'},minItems:1,maxItems:100,uniqueItems:true}},['assetIds']],
+    ['get_learning_memory','Read evidence, declared applications and other result versions of exact learning asset.',{assetId:{type:'string'}},['assetId']],
+    ['get_creator_task','Read frozen creator capture, sampling limits and transcript availability.',{taskId:{type:'string'}},['taskId']],
+  ].map(([name,description,properties,required])=>({name,description,annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},inputSchema:{type:'object',properties,required,additionalProperties:false}})),
+  {
+    name: "create_task_context",
+    description: "Build a bounded, read-only task context from an explicit goal and 1–10 exact shared asset IDs. Returns source content, evidence, limitations, revisions or content digests, and copyable Markdown. Proposed use only; does not record adoption or execute work.",
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal: { type: "string", minLength: 1, maxLength: 4000 },
+        assetIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 10, uniqueItems: true },
+      },
+      required: ["goal", "assetIds"], additionalProperties: false,
+    },
+  },
+  {name:'search_library_assets',description:'Search all registered project, website, book and learning assets with shared identities. Read-only. Preview statuses come from the registry snapshot, not live runtime state.',inputSchema:{type:'object',properties:{query:{type:'string'},kind:{type:'string'},sourceId:{type:'string'},language:{type:'string'}},additionalProperties:false}},
+  {name:'get_library_asset',description:'Read an asset by its exact shared library ID, including evidence, relationships and source read errors. Preview statuses come from the registry snapshot, not live runtime state.',inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id'],additionalProperties:false}},
   {
     name: "list_assets",
-    description: "List VibeFoundry asset package metadata and asset counts.",
+    description: "List VibeHub asset package metadata and asset counts.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -88,7 +119,7 @@ const toolDefinitions = [
   },
   {
     name: "get_agent_rules",
-    description: "Read the generated VibeFoundry agent rules.",
+    description: "Read the generated VibeHub agent rules.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -114,7 +145,7 @@ const toolDefinitions = [
 ];
 
 const missingAssetPackageMessage =
-  "Missing centralized asset package. Run `vibe-foundry distill .` or `node dist/cli.js distill .` from the project root first.";
+  "Missing centralized asset package. Run `vibe distill .` or `node dist/cli.js distill .` from the project root first.";
 
 function textResult(structuredContent, options = {}) {
   return {
@@ -224,19 +255,56 @@ function validateAsset(assetPackage, args = {}) {
   const exists = Boolean(asset);
   const guidance = exists
     ? [`${kind} asset \`${name}\` exists. Review source, constraints, and generated guidance before reuse.`]
-    : [`${kind} asset \`${name}\` was not found. Run VibeFoundry distill again or choose another asset.`];
+    : [`${kind} asset \`${name}\` was not found. Run VibeHub distill again or choose another asset.`];
 
   return { exists, kind, name, asset: asset ?? null, guidance };
 }
 
-export function listVibeFoundryTools() {
+export function listVibeHubTools() {
   return toolDefinitions.map((tool) => ({
     ...tool,
     inputSchema: { ...tool.inputSchema },
   }));
 }
 
-export async function callVibeFoundryTool(projectRoot, toolName, args = {}, options = {}) {
+export async function callVibeHubTool(projectRoot, toolName, args = {}, options = {}) {
+  if(['list_prompts','get_prompt','render_prompt','list_knowledge_collections','get_knowledge_collection','explore_asset_relations','get_learning_memory','get_creator_task'].includes(toolName)) {
+    try {
+      const schema=toolDefinitions.find(tool=>tool.name===toolName).inputSchema;
+      if(!args||typeof args!=='object'||Array.isArray(args)||![Object.prototype,null].includes(Object.getPrototypeOf(args))||Object.keys(args).some(key=>!Object.hasOwn(schema.properties,key))||schema.required.some(key=>!Object.hasOwn(args,key))) throw new Error('工具参数存在缺失或未知字段。');
+      const root=resolveAssetLibraryRoot(options.assetLibraryRoot);let result;
+      if(toolName==='list_prompts') result=await listPrompts(root);
+      else if(toolName==='get_prompt') result=await getPrompt(root,args.id,args.revision);
+      else if(toolName==='render_prompt') result=await renderPrompt(root,args);
+      else if(toolName==='list_knowledge_collections') result=await listKnowledgeCollections(root);
+      else if(toolName==='get_knowledge_collection') result=await getKnowledgeCollection(root,args.id);
+      else if(toolName==='explore_asset_relations') result=await exploreAssetRelations(root,args);
+      else if(toolName==='get_learning_memory') result=await getLearningMemory(root,args);
+      else result=await getCreatorTask(root,args.taskId);
+      return textResult(result);
+    }catch(error){return textResult({message:error.message},{isError:true});}
+  }
+  if (toolName === "create_task_context") {
+    try {
+      return textResult(await createTaskContext(resolveAssetLibraryRoot(options.assetLibraryRoot), args));
+    } catch (error) {
+      return textResult({ message: error instanceof Error ? error.message : String(error) }, { isError: true });
+    }
+  }
+  if (['search_library_assets','get_library_asset'].includes(toolName)) {
+    try {
+      if (!args || typeof args !== 'object' || Array.isArray(args)
+        || ![Object.prototype,null].includes(Object.getPrototypeOf(args))) throw new Error('工具参数必须为普通对象。');
+      if (toolName === 'search_library_assets') queryAssets([],args);
+      else if (typeof args.id !== 'string' || !args.id.trim() || Object.keys(args).some(key=>key!=='id')) throw new Error('必须提供精确资产 id，且不能包含其他字段。');
+      const model = await loadAssetLibraryViewModel(resolveAssetLibraryRoot(options.assetLibraryRoot), {runtimePreviewState:false});
+      if (model.isError) return textResult({message:model.message},{isError:true});
+      if (toolName === 'search_library_assets') return textResult({assets:queryAssets(model.assets,args),sources:model.sources,errors:model.errors,previewStateSource:model.previewStateSource});
+      return textResult({asset:model.assets.find(asset=>asset.id===args.id)||null,errors:model.errors,previewStateSource:model.previewStateSource});
+    } catch (error) {
+      return textResult({message:error instanceof Error?error.message:String(error)},{isError:true});
+    }
+  }
   const withPackage = (handler) => withAssetPackage(projectRoot, handler, options);
   switch (toolName) {
     case "list_assets":
@@ -343,7 +411,7 @@ export async function callVibeFoundryTool(projectRoot, toolName, args = {}, opti
     default:
       return textResult(
         {
-          message: `Unknown VibeFoundry MCP tool: ${toolName}`,
+          message: `Unknown VibeHub MCP tool: ${toolName}`,
           availableTools: toolDefinitions.map((tool) => tool.name),
         },
         { isError: true },
@@ -368,6 +436,10 @@ function rpcError(id, code, message) {
 }
 
 export async function handleMcpRequest(projectRoot, request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)
+    || request.jsonrpc !== '2.0' || typeof request.method !== 'string' || !request.method) {
+    return rpcError(null,-32600,'Invalid JSON-RPC request.');
+  }
   if (request.method === "initialize") {
     return rpcResponse(request.id, {
       protocolVersion: "2025-06-18",
@@ -375,7 +447,7 @@ export async function handleMcpRequest(projectRoot, request) {
         tools: {},
       },
       serverInfo: {
-        name: "vibe-foundry",
+        name: "vibehub",
         version: "0.1.0",
       },
     });
@@ -387,17 +459,21 @@ export async function handleMcpRequest(projectRoot, request) {
 
   if (request.method === "tools/list") {
     return rpcResponse(request.id, {
-      tools: listVibeFoundryTools(),
+      tools: listVibeHubTools(),
     });
   }
 
   if (request.method === "tools/call") {
-    const result = await callVibeFoundryTool(
-      projectRoot,
-      request.params?.name,
-      request.params?.arguments ?? {},
-    );
-    return rpcResponse(request.id, result);
+    try {
+      const result = await callVibeHubTool(
+        projectRoot,
+        request.params?.name,
+        request.params?.arguments === undefined ? {} : request.params.arguments,
+      );
+      return rpcResponse(request.id, result);
+    } catch (error) {
+      return rpcResponse(request.id,textResult({message:error instanceof Error?error.message:String(error)},{isError:true}));
+    }
   }
 
   return rpcError(request.id ?? null, -32601, `Unknown MCP method: ${request.method}`);
@@ -408,7 +484,7 @@ function parseProjectRoot(argv) {
   if (flagIndex >= 0 && argv[flagIndex + 1]) {
     return argv[flagIndex + 1];
   }
-  return process.env.VIBE_FOUNDRY_PROJECT_ROOT ?? process.cwd();
+  return process.env.VIBEHUB_PROJECT_ROOT ?? process.cwd();
 }
 
 export function startMcpStdioServer(options = {}) {
@@ -430,10 +506,20 @@ export function startMcpStdioServer(options = {}) {
         if (!line.trim()) {
           continue;
         }
-        const response = await handleMcpRequest(projectRoot, JSON.parse(line));
-        if (response) {
-          process.stdout.write(`${JSON.stringify(response)}\n`);
+        let request;
+        try {
+          request = JSON.parse(line);
+        } catch {
+          process.stdout.write(`${JSON.stringify(rpcError(null,-32700,'Invalid JSON.'))}\n`);
+          continue;
         }
+        let response;
+        try {
+          response = await handleMcpRequest(projectRoot,request);
+        } catch (error) {
+          response = rpcError(request?.id ?? null,-32603,error instanceof Error?error.message:String(error));
+        }
+        if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
       }
     });
   });

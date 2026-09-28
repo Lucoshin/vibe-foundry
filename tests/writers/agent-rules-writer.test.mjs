@@ -7,9 +7,9 @@ describe("buildAgentRulesMarkdown", () => {
   it("emits agent rules for asset lookup, backend constraints, and culture assets", () => {
     const markdown = buildAgentRulesMarkdown();
 
-    assert.match(markdown, /# VibeFoundry Agent Rules/);
+    assert.match(markdown, /# VibeHub Agent Rules/);
     assert.match(markdown, /查本次 `distill` 输出的集中资产包目录/);
-    assert.doesNotMatch(markdown, /\.vibe-foundry/);
+    assert.doesNotMatch(markdown, /\.vibehub/);
     assert.match(markdown, /优先复用已有 tokens/);
     assert.match(markdown, /service-catalog\.json/);
     assert.match(markdown, /登录\/注册\/权限/);

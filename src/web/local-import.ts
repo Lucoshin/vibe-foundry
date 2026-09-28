@@ -1,3 +1,5 @@
+import { isLocalPageRequest, readLocalJson } from './local-request.js';
+import { getRecipe } from '../learning/recipes.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
@@ -31,19 +33,24 @@ export function createLocalImport({ libraryRoot, initialDirectory = process.cwd(
           .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, 'zh-CN') : a.kind === 'directory' ? -1 : 1)),
       };
     },
-    status() { return job && { ...job }; },
-    async start(path) {
+    status() { return job && structuredClone(job); },
+    async start(path, options = {}) {
       if (starting || job?.state === 'running') throw new Error('已有任务正在炼化，请等待完成。');
       starting = true;
       try {
+        if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key=>!['recipeId','recipeVersion'].includes(key))) throw new Error('工程方案选项包含未知字段。');
         requirePath(path);
         const sourcePath = await realpath(path);
         const info = await stat(sourcePath);
         const kind = info.isDirectory() ? 'project' : info.isFile() && documentExtensions.has(extname(sourcePath).toLowerCase()) ? 'document' : null;
         if (!kind) throw new Error('仅支持项目文件夹或 PDF、TXT、Markdown 文档。');
+        if (kind === 'document' && Object.keys(options).length) throw new Error('文档导入不能携带工程炼化方案。');
+        const recipe = kind === 'project' ? await getRecipe(libraryRoot, Object.hasOwn(options,'recipeId') ? options.recipeId : 'component-distillation', options.recipeVersion) : null;
+        if (recipe && !recipe.sourceKinds.includes('project')) throw new Error('所选炼化方案不支持工程 project 来源。');
         job = { id: randomUUID(), state: 'running', kind, sourcePath, name: basename(sourcePath), message: '正在分析并生成资产…' };
+        if (recipe) job.recipe = { id:recipe.id, version:recipe.version, name:recipe.name, digest:recipe.digest };
         const active = job;
-        execute(process.execPath, [fileURLToPath(new URL('./import-worker.js', import.meta.url)), kind, sourcePath, libraryRoot], { windowsHide: true, maxBuffer: 1024 * 1024 })
+        execute(process.execPath, [fileURLToPath(new URL('./import-worker.js', import.meta.url)), kind, sourcePath, libraryRoot, ...(recipe ? [recipe.id, String(recipe.version)] : [])], { windowsHide: true, maxBuffer: 1024 * 1024 })
           .then(({ stdout }) => {
             active.outputDir = JSON.parse(stdout).outputDir;
             active.state = 'succeeded';
@@ -53,7 +60,7 @@ export function createLocalImport({ libraryRoot, initialDirectory = process.cwd(
             active.state = 'failed';
             active.message = error.stderr?.trim() || error.message;
           });
-        return { ...job };
+        return structuredClone(job);
       } finally {
         starting = false;
       }
@@ -76,13 +83,7 @@ export function createImportRequestHandler({ libraryRoot, token, initialDirector
       response.setHeader('cache-control', 'no-store');
       response.end(type.startsWith('application/json') && typeof value !== 'string' ? JSON.stringify(value) : value);
     };
-    const address = request.socket?.remoteAddress;
-    const host = request.headers?.host;
-    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address)
-      || !/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host || '')
-      || request.headers?.['x-vibe-import-token'] !== token
-      || (request.headers.origin && request.headers.origin !== `http://${host}`)
-      || (request.headers['sec-fetch-site'] && request.headers['sec-fetch-site'] !== 'same-origin')) {
+    if (!isLocalPageRequest(request, token)) {
       send(403, { message: '本地导入请求未通过页面校验，请刷新页面后重试。' });
       return true;
     }
@@ -92,17 +93,12 @@ export function createImportRequestHandler({ libraryRoot, token, initialDirector
         const type = url.pathname.endsWith('/report') ? 'report' : 'assets';
         send(200, await service.result(type), type === 'report' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8');
       } else if (request.method === 'POST' && ['/api/import/browse', '/api/import/start'].includes(url.pathname)) {
-        if (!String(request.headers['content-type']).startsWith('application/json')) throw new Error('请求必须为 JSON。');
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of request) {
-          size += chunk.length;
-          if (size > 16384) throw new Error('请求路径过长。');
-          chunks.push(chunk);
-        }
-        const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => key !== 'path')) throw new Error('请求仅允许 path 字段。');
-        send(url.pathname.endsWith('/start') ? 202 : 200, url.pathname.endsWith('/start') ? await service.start(data.path) : await service.browse(data.path));
+        const data = await readLocalJson(request, 16384);
+        const start = url.pathname.endsWith('/start');
+        const allowed = start ? ['path','recipeId','recipeVersion'] : ['path'];
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !allowed.includes(key))) throw new Error('请求包含未知字段，仅允许 ' + allowed.join('、') + '。');
+        const {path,...options} = data;
+        send(start ? 202 : 200, start ? await service.start(path, options) : await service.browse(path));
       } else send(405, { message: '不支持的导入请求。' });
     } catch (error) {
       send(400, { message: error.message });

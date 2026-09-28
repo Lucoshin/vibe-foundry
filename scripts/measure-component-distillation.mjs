@@ -8,7 +8,7 @@ import { distillProject } from "../dist/index.js";
 import { readComponentPrompt } from "../dist/library/component-prompts.js";
 
 const componentCount = 20;
-const temporaryPrefix = "vibe-foundry-component-benchmark-";
+const temporaryPrefix = "vibehub-component-benchmark-";
 
 function parseOutput(argv) {
   if (argv.length === 0) return null;

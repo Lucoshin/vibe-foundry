@@ -10,7 +10,7 @@ import { openSourceSession } from "../../dist/fidelity/source-session-supervisor
 const roots = [];
 
 async function createProject(packageJson, lockfile = "package-lock.json") {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-source-session-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-source-session-"));
   roots.push(root);
   await writeFile(join(root, "package.json"), JSON.stringify(packageJson));
   if (lockfile) await writeFile(join(root, lockfile), "lock");
@@ -171,7 +171,7 @@ describe("openSourceSession", () => {
       ].join("\n"),
     );
     const forbiddenEnvironment = {
-      VIBE_FOUNDRY_TEST_SECRET: "source-secret-sentinel",
+      VIBEHUB_TEST_SECRET: "source-secret-sentinel",
       VITE_PRIVATE_TOKEN: "vite-secret-sentinel",
       NPM_TOKEN: "npm-token-sentinel",
     };

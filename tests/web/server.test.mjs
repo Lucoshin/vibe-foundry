@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { runInNewContext } from "node:vm";
 
 import {
   createWebRequestHandler,
@@ -19,7 +20,7 @@ import { buildComponentPreviewRegistry } from "../../dist/preview/component-prev
 const roots = [];
 const actionDigest = "a".repeat(64);
 const updatedActionDigest = "b".repeat(64);
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 let previewBuildNumber = 0;
 
 async function writeJson(path, value) {
@@ -71,11 +72,11 @@ async function commitPreviewBundle(assetDir, component, files) {
 }
 
 async function createAssetPackage() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-web-server-"));
-  const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-server-library-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-web-server-"));
+  const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-web-server-library-"));
   const assetDir = assetPackageDirectoryFor(libraryRoot, root);
   roots.push(root, libraryRoot);
-  process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+  process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
   await mkdir(assetDir, { recursive: true });
   await writeJson(join(assetDir, "asset-manifest.json"), {
     sourceProject: "web-server-fixture",
@@ -143,23 +144,95 @@ async function waitForPreviewResponse(handler, url, pattern) {
 }
 
 describe("web server frontend", () => {
+  it("waits for the shared build without polling or sending duplicate HTML", async () => {
+    const { root, assetDir } = await createAssetPackage();
+    let finish;
+    const gate = new Promise(resolve => { finish = resolve; });
+    let builds = 0;
+    const handler = createWebRequestHandler(root, {
+      buildComponentPreviewStaticBundle: async () => {
+        builds += 1;
+        await gate;
+        return commitPreviewBundle(assetDir, "button-ab12cd", { "index.html": "ready" });
+      },
+    });
+    const loading = createMockResponse();
+    await handler({ method: "GET", url: "/component-preview/button-ab12cd/" }, loading);
+    const waited = createMockResponse();
+    let completed = false;
+    const pending = handler({ method: "GET", url: "/component-preview/button-ab12cd/?wait=1" }, waited).then(() => { completed = true; });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const completedBeforeBuild = completed;
+    finish();
+    await pending;
+    await waitForPreviewResponse(handler, "/component-preview/button-ab12cd/", /ready/);
+    assert.equal(completedBeforeBuild, false);
+    assert.equal(waited.statusCode, 204);
+    assert.equal(waited.body, "");
+    assert.equal(waited.headers["cache-control"], "no-store");
+    assert.equal(builds, 1);
+    assert.doesNotMatch(loading.body, /setTimeout/);
+  });
+
+  it("caches versioned resources privately and serves them without reading unrelated blobs", async () => {
+    const { root, assetDir } = await createAssetPackage();
+    await commitPreviewBundle(assetDir, "button-ab12cd", { "index.html": "ready", "assets/app.js": "script", "unused.bin": "unused" });
+    const unusedDigest = createHash("sha256").update("unused").digest("hex");
+    await rm(join(assetDir, "preview-cas", "blobs", "sha256", unusedDigest.slice(0, 2), unusedDigest));
+    const handler = createWebRequestHandler(root);
+    const script = createMockResponse();
+    await handler({ method: "GET", url: `/component-preview/button-ab12cd/${actionDigest}/assets/app.js` }, script);
+    assert.equal(script.statusCode, 200);
+    assert.equal(script.body, "script");
+    assert.equal(script.headers["cache-control"], "private, max-age=31536000, immutable");
+    const html = createMockResponse();
+    await handler({ method: "GET", url: `/component-preview/button-ab12cd/${actionDigest}/index.html` }, html);
+    assert.equal(html.headers["cache-control"], "no-store");
+    assert.ok(html.headers["set-cookie"]);
+    const missing = createMockResponse();
+    await handler({ method: "GET", url: `/component-preview/button-ab12cd/${actionDigest}/absent.js` }, missing);
+    assert.equal(missing.statusCode, 404);
+    assert.equal(missing.headers["cache-control"], "no-store");
+  });
+
+  it("releases a long wait connection while its shared build is still pending", async () => {
+    const { root, assetDir } = await createAssetPackage();
+    let finish;
+    const gate = new Promise(resolve => { finish = resolve; });
+    const handler = createWebRequestHandler(root, {
+      buildComponentPreviewStaticBundle: async () => {
+        await gate;
+        return commitPreviewBundle(assetDir, "button-ab12cd", { "index.html": "ready" });
+      },
+    });
+    const release = setTimeout(finish, 1600);
+    try {
+      const response = createMockResponse();
+      await handler({ method: "GET", url: "/component-preview/button-ab12cd/?wait=1" }, response);
+      const status = response.statusCode;
+      finish();
+      await waitForPreviewResponse(handler, "/component-preview/button-ab12cd/", /ready/);
+      assert.equal(status, 202);
+      assert.equal(response.body, "");
+    } finally { clearTimeout(release); }
+  });
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
     if (originalLibraryRoot === undefined) {
-      delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+      delete process.env.VIBEHUB_LIBRARY_ROOT;
     } else {
-      process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+      process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
     }
   });
 
   it("renders the Chinese asset browser shell", () => {
     const html = renderWebAppHtml();
 
-    assert.match(html, /VibeFoundry/);
-    assert.match(html, /资产总览/);
+    assert.match(html, /VibeHub/);
+    assert.match(html, /资产库/);
     assert.match(html, /搜索资产、来源或复用建议/);
     assert.match(html, /asset-detail/);
-    assert.match(html, /复用报告/);
+    assert.match(html, /来源库/);
     assert.match(html, /lang="zh-CN"/);
     assert.doesNotMatch(html, /manuscript-canvas/);
     assert.match(webAppCss, /--paper/);
@@ -253,6 +326,12 @@ describe("web server frontend", () => {
       assert.equal(response.statusCode, 200);
       assert.deepEqual(JSON.parse(response.body), asset.expected);
     }
+    const pageAsset = { ...assets[0], id: 'pages:registered-route', category: 'pages' };
+    assets.push(pageAsset);
+    const pageResponse = createMockResponse();
+    await handler({ url: '/api/component-prompt/' + encodeURIComponent(pageAsset.id), method: 'GET' }, pageResponse);
+    assert.equal(pageResponse.statusCode, 200);
+    assert.deepEqual(JSON.parse(pageResponse.body), pageAsset.expected);
     const listResponse = createMockResponse();
     await handler({ url: "/api/assets", method: "GET" }, listResponse);
     assert.doesNotMatch(listResponse.body, /横向布局，按钮内容居中|纵向布局，使用圆角卡片/);
@@ -330,7 +409,7 @@ describe("web server frontend", () => {
     const reportResponse = createMockResponse();
     await handler({ url: "/api/report/reuse", method: "GET" }, reportResponse);
 
-    assert.match(htmlResponse.body, /VibeFoundry/);
+    assert.match(htmlResponse.body, /VibeHub/);
     assert.equal(JSON.parse(assetsResponse.body).project.sourceProject, "web-server-fixture");
     assert.match(reportResponse.body, /Reuse Report/);
   });
@@ -379,7 +458,7 @@ describe("web server frontend", () => {
     const healthyResponse = createMockResponse();
     await handler({ url: "/", method: "GET", headers: {} }, healthyResponse);
     assert.equal(healthyResponse.statusCode, 200);
-    assert.match(healthyResponse.body, /VibeFoundry/);
+    assert.match(healthyResponse.body, /VibeHub/);
   });
 
   it("promotes only a browser-mounted complete preview to ready", async () => {
@@ -577,7 +656,7 @@ describe("web server frontend", () => {
     const legacyDir = join(assetDir, "component-preview-static", "button-ab12cd");
     await mkdir(legacyDir, { recursive: true });
     await writeFile(join(legacyDir, "index.html"), "<!doctype html><title>Legacy Preview</title>");
-    await writeFile(join(legacyDir, ".vibe-foundry-preview-cache-key"), `${actionDigest}\n`);
+    await writeFile(join(legacyDir, ".vibehub-preview-cache-key"), `${actionDigest}\n`);
     let buildCount = 0;
     const handler = createWebRequestHandler(root, {
       buildComponentPreviewStaticBundle: async (_projectRoot, options) => {
@@ -648,7 +727,7 @@ describe("web server frontend", () => {
     assert.deepEqual(builtDigests, [actionDigest, updatedActionDigest]);
   });
 
-  it("keeps the loading document stable while probing and navigates once when the build ends", async () => {
+  it("keeps the loading document stable while waiting and navigates once when the build ends", async () => {
     const { root, assetDir } = await createAssetPackage();
     let completeBuild;
     const handler = createWebRequestHandler(root, {
@@ -662,36 +741,55 @@ describe("web server frontend", () => {
     assert.doesNotMatch(loading.body, /http-equiv="refresh"/);
     const script = loading.body.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     assert.ok(script);
-    const timers = [];
     let reloads = 0;
-    let state = "building";
-    const run = new Function("window", "document", "fetch", "setTimeout", script);
-    run(
-      { location: { href: "http://localhost/component-preview/button-ab12cd/", reload: () => { reloads += 1; } } },
-      { getElementById: () => ({ textContent: "" }) },
-      async () => ({ ok: true, headers: { get: () => state } }),
-      callback => timers.push(callback),
-    );
-    await timers.shift()();
+    let respond;
+    const context = {
+      URL,
+      window: { location: { href: "http://localhost/component-preview/button-ab12cd/?embed=1", reload: () => { reloads += 1; } } },
+      document: { getElementById: () => ({ textContent: "" }) },
+      fetch: async url => {
+        assert.equal(url, "http://localhost/component-preview/button-ab12cd/?embed=1&wait=1");
+        return new Promise(resolve => { respond = resolve; });
+      },
+    };
+    const waiting = runInNewContext(script, context);
     assert.equal(reloads, 0);
-    assert.equal(timers.length, 1);
-    state = "ready";
-    await timers.shift()();
+    respond({ ok: true, status: 202 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reloads, 0);
+    respond({ ok: true });
+    await waiting;
     assert.equal(reloads, 1);
-    assert.equal(timers.length, 0);
     let failurePage = "";
-    run(
-      { location: { href: "http://localhost/component-preview/button-ab12cd/", reload: () => { reloads += 1; } } },
-      { open() {}, write(html) { failurePage = html; }, close() {} },
-      async () => ({ ok: false, headers: { get: () => null }, text: async () => "<p>组件预览暂不可用</p>" }),
-      callback => timers.push(callback),
-    );
-    await timers.shift()();
+    await runInNewContext(script, {
+      ...context,
+      document: { open() {}, write(html) { failurePage = html; }, close() {} },
+      fetch: async () => ({ ok: false, text: async () => "<p>组件预览暂不可用</p>" }),
+    });
     assert.equal(reloads, 1);
-    assert.equal(timers.length, 0);
     assert.match(failurePage, /组件预览暂不可用/);
+    const message = { textContent: "" };
+    await runInNewContext(script, {
+      ...context,
+      document: { getElementById: () => message },
+      fetch: async () => { throw new Error("connection closed"); },
+    });
+    assert.match(message.textContent, /无法连接预览服务/);
     completeBuild();
     await waitForPreviewResponse(handler, "/component-preview/button-ab12cd/", /ready/);
+  });
+
+  it("returns build failures to a waiting request without a reload loop", async () => {
+    const { root } = await createAssetPackage();
+    const handler = createWebRequestHandler(root, {
+      buildComponentPreviewStaticBundle: async () => { throw new Error("compile failed"); },
+    });
+    const response = createMockResponse();
+    await handler({ method: "GET", url: "/component-preview/button-ab12cd/?wait=1" }, response);
+    assert.equal(response.statusCode, 500);
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.match(response.body, /组件预览暂不可用/);
+    assert.doesNotMatch(response.body, /checkPreview|reload/);
   });
 
   it("returns a calm Chinese HTML failure for a missing Vue 2.6 compiler without scheduling a build", async () => {
@@ -921,13 +1019,16 @@ describe("web server frontend", () => {
     let maximumActive = 0;
     let finished = 0;
     const buildCalls = [];
+    const buildGate = Promise.withResolvers();
+    const allFinished = Promise.withResolvers();
     const handler = createWebRequestHandler(root, {
       buildComponentPreviewStaticBundle: async (_projectRoot, options) => {
         buildCalls.push(options.component);
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         try {
-          await new Promise(resolvePromise => setTimeout(resolvePromise, 40));
+          // Keep the initial duplicate request inside the same in-flight build.
+          await buildGate.promise;
           if (options.component === "component-0") throw new Error("First component failed");
           return await commitPreviewBundle(options.assetDir, options.component, {
             "index.html": `<title>Ready ${options.component}</title>`,
@@ -935,24 +1036,27 @@ describe("web server frontend", () => {
         } finally {
           active -= 1;
           finished += 1;
+          if (finished === registry.previews.length) allFinished.resolve();
         }
       },
     });
     const previews = [...registry.previews, registry.previews[0]];
-    await Promise.all(previews.map(preview => handler({
-      url: `/component-preview/${preview.id}/`, method: "GET",
-    }, createMockResponse())));
-    for (let attempt = 0; finished < 6 && attempt < 100; attempt += 1) {
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 10));
-    }
+    const initialResponses = await Promise.all(previews.map(async preview => {
+      const response = createMockResponse();
+      await handler({ url: `/component-preview/${preview.id}/`, method: "GET" }, response);
+      return response;
+    }));
+    assert.equal(finished, 0);
+    assert.ok(initialResponses.every(response => response.statusCode === 200));
+    buildGate.resolve();
+    await allFinished.promise;
     assert.equal(finished, 6);
     assert.equal(maximumActive, 2);
     assert.deepEqual([...buildCalls].sort(), registry.previews.map(preview => preview.id).sort());
     for (const preview of registry.previews) {
-      const response = createMockResponse();
-      await handler({ url: `/component-preview/${preview.id}/`, method: "GET" }, response);
+      const pattern = preview.id === "component-0" ? /First component failed/ : new RegExp(`Ready ${preview.id}`);
+      const response = await waitForPreviewResponse(handler, `/component-preview/${preview.id}/`, pattern);
       assert.equal(response.statusCode, preview.id === "component-0" ? 500 : 200);
-      assert.match(response.body, preview.id === "component-0" ? /First component failed/ : new RegExp(`Ready ${preview.id}`));
     }
     assert.equal(buildCalls.length, 6);
   });
@@ -991,9 +1095,9 @@ describe("web server frontend", () => {
   });
 
   it("passes the centralized asset package directory into component preview builds", async () => {
-    const sourceRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-source-"));
-    const assetPackageDir = await mkdtemp(join(tmpdir(), "vibe-foundry-web-library-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-index-"));
+    const sourceRoot = await mkdtemp(join(tmpdir(), "vibehub-web-source-"));
+    const assetPackageDir = await mkdtemp(join(tmpdir(), "vibehub-web-library-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-web-index-"));
     roots.push(sourceRoot, assetPackageDir, libraryRoot);
     await writeJson(join(assetPackageDir, "component-previews.json"), {
       previews: [{ id: "button-ab12cd", componentName: "Button", actionDigest }],
@@ -1026,8 +1130,8 @@ describe("web server frontend", () => {
   });
 
   it("uses updated library preview digests without reading reports or asset catalogs", async () => {
-    const sourceRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-preview-source-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-preview-library-"));
+    const sourceRoot = await mkdtemp(join(tmpdir(), "vibehub-web-preview-source-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-web-preview-library-"));
     const assetDir = assetPackageDirectoryFor(libraryRoot, sourceRoot);
     roots.push(sourceRoot, libraryRoot);
     await mkdir(assetDir, { recursive: true });

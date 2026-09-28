@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join } from "node:path";
 
 import { buildFrontendSourceIndex } from "./frontend-source-index.js";
 import { planComponentLocatorEvidence } from "./component-locator-planner.js";
 import { planSourceRoutes } from "./source-route-planner.js";
+import { isEmptyComponentShell, isIconPrimitive, isHeadlessComponent } from "./component-selection.js";
 import { listFiles, readTextFile } from "../utils/files.js";
 
 const businessCouplingPattern =
@@ -230,9 +231,28 @@ function sourceCaptureCandidatesFor(component, routePlan) {
 }
 
 export async function analyzeComponents(projectRoot, componentDirs, usageDirs = [], options = {}) {
-  const files = await listFiles(projectRoot, componentDirs, [".tsx", ".jsx", ".js", ".vue"]);
-  const sourceIndex = options.sourceIndex ?? await buildFrontendSourceIndex(projectRoot, usageDirs);
+  const extensions = [".tsx", ".jsx", ".js", ".vue"];
+  const explicitFiles = options.filePaths !== undefined;
+  if (explicitFiles && (!Array.isArray(options.filePaths) || options.filePaths.some(filePath =>
+    typeof filePath !== 'string' || isAbsolute(filePath) || filePath.includes('\\') ||
+    filePath.split('/').some(part => !part || part === '.' || part === '..') || !extensions.includes(extname(filePath))))) {
+    throw new Error('显式源码文件路径必须是工程内的相对组件路径。');
+  }
+  if (explicitFiles && options.filePaths.length === 0) return [];
+  const sourceIndex = options.sourceIndex ?? await buildFrontendSourceIndex(projectRoot,
+    explicitFiles ? [...new Set([...usageDirs, ...options.filePaths.map(filePath => dirname(filePath))])] : usageDirs);
   const indexedFiles = new Map(sourceIndex.files.map((file) => [file.filePath, file]));
+  const directories = componentDirs.map(directory => directory.replaceAll("\\", "/").replace(/\/$/, ""));
+  const files = explicitFiles
+    ? [...new Set(options.filePaths)].map(filePath => {
+      if (!indexedFiles.has(filePath)) throw new Error(`显式源码文件未进入索引：${filePath}`);
+      return { filePath, fullPath: join(projectRoot, filePath) };
+    })
+    : options.sourceIndex
+    ? options.sourceIndex.files.filter(file => extensions.includes(extname(file.filePath))
+      && directories.some(directory => directory === "." || file.filePath.startsWith(directory + "/")))
+      .map(file => ({ filePath: file.filePath, fullPath: join(projectRoot, file.filePath) }))
+    : await listFiles(projectRoot, componentDirs, extensions);
   const sourceTexts = new Map(sourceIndex.files.map((file) => [file.filePath, Promise.resolve(file.sourceText)]));
   const readSource = (filePath) => {
     if (!sourceTexts.has(filePath)) sourceTexts.set(filePath, readTextFile(join(projectRoot, filePath)));
@@ -248,11 +268,20 @@ export async function analyzeComponents(projectRoot, componentDirs, usageDirs = 
   const components = [];
 
   for (const file of files) {
-    if (!isComponentSourceFile(file.filePath)) {
+    if (!explicitFiles && !isComponentSourceFile(file.filePath)) {
       continue;
     }
     const sourceText = await readSource(file.filePath);
     const name = componentNameFromPath(file.filePath);
+    if (!explicitFiles) {
+      const excludedRule = options.componentRules?.emptyShells === 'exclude' && isEmptyComponentShell(file.filePath, sourceText) ? 'emptyShells'
+        : options.componentRules?.iconPrimitives === 'exclude' && isIconPrimitive(file.filePath, name, sourceText) ? 'iconPrimitives'
+        : options.componentRules?.headlessContainers === 'exclude' && isHeadlessComponent(file.filePath, sourceText) ? 'headlessContainers' : null;
+      if (excludedRule) {
+        options.selectionDecisions?.push({filePath:file.filePath,name,decision:'exclude',rule:excludedRule});
+        continue;
+      }
+    }
     const exportContract = vueFilePattern.test(file.filePath)
       ? { exportMode: "default", exportName: "default" }
       : exportContractFor(name, sourceText);

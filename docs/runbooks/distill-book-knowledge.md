@@ -1,5 +1,5 @@
 ---
-project: VibeFoundry
+project: VibeHub
 category: runbook
 source_path: docs/runbooks/distill-book-knowledge.md
 status: active
@@ -8,7 +8,7 @@ last_updated: 2026-09-08
 
 # 从书籍炼化世界观、角色卡和知识网络
 
-当前实现由 VibeFoundry 准备阅读材料、校验来源、生成资产，语义阅读和跨块实体归并由当前使用的 AI（如 Codex）执行。不需要另配 API；项目独立运行时尚不会自动调用模型。书籍支持 TXT、Markdown 和可提取文字的 PDF；PDF 需要 pdftotext，扫描件 OCR 与 EPUB 未接入。
+当前实现由 VibeHub 准备阅读材料、校验来源、生成资产，语义阅读和跨块实体归并由当前使用的 AI（如 Codex）执行。不需要另配 API；项目独立运行时尚不会自动调用模型。书籍支持 TXT、Markdown 和可提取文字的 PDF；PDF 需要 pdftotext，扫描件 OCR 与 EPUB 未接入。
 
 ## 操作
 
@@ -23,7 +23,7 @@ node dist/cli.js distill-book <book-path> --prepare <new-work-dir>
 
 交给当前 AI 的任务可直接这样描述：
 
-> 阅读指定工作目录中的 book-task.md，按清单逐块阅读，维护统一实体登记表，提取世界观、角色卡、设定、概念和隐喻及其关系。每条结论附短原文依据，区分原文明示与解读。同名人物不直接合并，传言不当世界规则。全部读完后写出 analysis.json，再用 VibeFoundry 导入校验；未完成的块明确保留为未完成。
+> 阅读指定工作目录中的 book-task.md，按清单逐块阅读，维护统一实体登记表，提取世界观、角色卡、设定、概念和隐喻及其关系。每条结论附短原文依据，区分原文明示与解读。同名人物不直接合并，传言不当世界规则。全部读完后写出 analysis.json，再用 VibeHub 导入校验；未完成的块明确保留为未完成。
 
 完成阅读后运行：
 
@@ -37,7 +37,7 @@ node dist/cli.js distill-book <book-path> --analysis <analysis-json>
 
 ## 产物与用途
 
-正式资产写到集中资产库 `books/<book-id>`。资产库根依次采用编程调用的显式 `assetLibraryRoot`、`VIBE_FOUNDRY_LIBRARY_ROOT` 或当前用户主目录下的 `.vibe-foundry/library`；编程调用还支持明确的最终 `outputDir`。
+正式资产写到集中资产库 `books/<book-id>`。资产库根依次采用编程调用的显式 `assetLibraryRoot`、`VIBEHUB_LIBRARY_ROOT` 或当前用户主目录下的 `.vibehub/library`；编程调用还支持明确的最终 `outputDir`。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -69,5 +69,3 @@ node scripts/verify-book-knowledge.mjs --output output/book-knowledge
 ```
 
 最后一个命令在指定目录下保留独立的一次验证产物，输出关系图路径。样例来自仓库自创短篇《雾港》，结构化分析是预先阅读结果，用于验证程序契约、引文、卡片和 CLI，不代表整本长书的模型准确率。
-
-数据契约与后续范围见[实施计划](../plans/2026-09-08-book-knowledge-assets.md)，取舍见[开源研究](../research/2026-09-08-book-knowledge-open-source.md)。

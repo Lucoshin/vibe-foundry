@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { canonicalSerialize } from "./preview-action.js";
+import { canonicalSerialize } from "../utils/canonical-json.js";
 
 const artifactTreeSchemaVersion = 1;
 

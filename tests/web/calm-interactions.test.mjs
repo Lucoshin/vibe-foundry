@@ -112,6 +112,29 @@ function harness() {
   return { context, get };
 }
 
+test('pagination bounds mounted previews while search covers the whole library', () => {
+  const { context, get } = harness();
+  vm.runInContext(`const seed = state.model.assets[0]; state.model.assets = Array.from({length:55}, (_,i)=>({...seed,id:'asset'+i,name:'组件'+i})); renderList();`, context);
+  assert.equal(get('asset-list').children.length, 24);
+  const frame = get('asset-list').children[0].querySelector('iframe');
+  vm.runInContext('renderList()', context);
+  assert.equal(get('asset-list').children[0].querySelector('iframe'), frame);
+  vm.runInContext('changeAssetPage(2)', context);
+  assert.equal(get('asset-list').children.length, 7);
+  assert.equal(get('asset-list').children[0].dataset.assetId, 'asset48');
+  vm.runInContext("updateSearch('组件33')", context);
+  assert.equal(get('asset-list').children.length, 1);
+  assert.equal(get('asset-list').children[0].dataset.assetId, 'asset33');
+  assert.equal(vm.runInContext('state.assetPage', context), 0);
+});
+
+test('closing a cross-page preview returns to the selected asset page', () => {
+  const { context, get } = harness();
+  vm.runInContext(`const seed = state.model.assets[0]; state.model.assets = Array.from({length:50}, (_,i)=>({...seed,id:'asset'+i})); renderList(); showComponentPreview('asset24'); closeDetail();`, context);
+  assert.equal(vm.runInContext('state.assetPage', context), 1);
+  assert.equal(get('asset-list').children[0].dataset.assetId, 'asset24');
+});
+
 test('list shows a real thumbnail without selecting an asset, and selection retains the list', () => {
   const { context, get } = harness();
   vm.runInContext('renderList()', context);
@@ -284,4 +307,16 @@ test('a disconnected thumbnail error document is not reused in the workbench',()
  vm.runInContext("showComponentPreview('one')",context);
  assert.notEqual(get('asset-detail').querySelector('iframe'),frame);
  assert.ok(get('asset-detail').querySelector('iframe'));
+});
+
+test('leaving the asset workspace restores an enlarged thumbnail before closing detail',()=>{
+ const {context,get}=harness(); vm.runInContext('renderList()',context);
+ const thumbnail=get('asset-list').children[0].querySelector('.component-thumbnail');
+ const frame=thumbnail.querySelector('iframe'); frame.previewState={edited:'保留切换前状态'};
+ vm.runInContext("showComponentPreview('one'); state.workspace='learning'; state.selected=null; state.activePreviewAssetId=null; renderDetail();",context);
+ assert.equal(thumbnail.querySelector('iframe'),frame);
+ assert.equal(frame.previewState.edited,'保留切换前状态');
+ assert.equal(get('asset-detail').querySelector('iframe'),null);
+ vm.runInContext("state.workspace='assets'; renderList(); showComponentPreview('one')",context);
+ assert.equal(get('asset-detail').querySelector('iframe'),frame);
 });

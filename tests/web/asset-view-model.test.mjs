@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   loadAssetLibraryViewModel,
   loadAssetViewModel,
-} from "../../dist/web/asset-view-model.js";
+} from "../../dist/application/asset-catalog.js";
 import {
   assetPackageDirectoryFor,
   registerAssetPackage,
@@ -17,7 +17,7 @@ import { browserMountValidatorDigest } from "../../dist/preview/preview-validati
 
 const roots = [];
 const buttonActionDigest = "a".repeat(64);
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 
 describe("empty asset library", () => {
   it("returns a usable shell model for a missing index and an empty index", async () => {
@@ -27,7 +27,7 @@ describe("empty asset library", () => {
       if (indexed) await writeJson(join(root, "index.json"), { schemaVersion: "0.1.0", projects: [] });
       const model = await loadAssetLibraryViewModel(root);
       assert.equal(model.isError, false);
-    assert.equal(model.project.sourceProject, "VibeFoundry Library");
+    assert.equal(model.project.sourceProject, "VibeHub Library");
     assert.equal(model.summary.assetCounts.components, model.assets.filter(asset => asset.category === 'components').length);
     assert.equal(model.summary.assetCounts.services, model.assets.filter(asset => asset.category === 'services').length);
     assert.equal(model.summary.assetCounts.conceptAssets, model.assets.filter(asset => asset.category === 'product').length);
@@ -54,11 +54,11 @@ async function writeJson(path, value) {
 }
 
 async function createAssetPackage() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-web-"));
-  const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-library-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-web-"));
+  const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-web-library-"));
   const assetDir = assetPackageDirectoryFor(libraryRoot, root);
   roots.push(root, libraryRoot);
-  process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+  process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
   await mkdir(join(assetDir, "metaphor-packs"), { recursive: true });
   await writeJson(join(assetDir, "asset-manifest.json"), {
     sourceProject: "web-fixture",
@@ -140,12 +140,27 @@ async function createAssetPackage() {
 }
 
 describe("loadAssetViewModel", () => {
+  it("associates registered pages with their own same-origin preview by file path", async () => {
+    const { root, assetDir } = await createAssetPackage();
+    const catalog = JSON.parse(await readFile(join(assetDir, 'component-catalog.json'), 'utf8'));
+    catalog.pages = [{kind:'page', name:'Publish', route:'/pages/publish/index',filePath:'src/pages/publish/index.vue',blocks:[],states:[],limitations:[]}];
+    await writeJson(join(assetDir, 'component-catalog.json'), catalog);
+    const registry = JSON.parse(await readFile(join(assetDir, 'component-previews.json'), 'utf8'));
+    registry.previews.push({id:'publish-page',componentPath:'src/pages/publish/index.vue',status:'pending',buildable:true,runtime:'vue3',previewScenario:{sourceFile:'src/Button.tsx',unresolvedProps:['job']}});
+    await writeJson(join(assetDir, 'component-previews.json'), registry);
+    const model = await loadAssetViewModel(root, {runtimePreviewState:false});
+    const page = model.assets.find(asset => asset.kind === 'page');
+    assert.equal(page.componentPreview.id, 'publish-page');
+    assert.equal(page.componentPreview.previewUrl, '/component-preview/publish-page/');
+    assert.equal(page.componentPreview.contextPreview, undefined, '页面不替换成其他组件场景');
+    assert.equal(page.componentPreview.status, 'pending');
+  });
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
     if (originalLibraryRoot === undefined) {
-      delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+      delete process.env.VIBEHUB_LIBRARY_ROOT;
     } else {
-      process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+      process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
     }
   });
 
@@ -159,7 +174,7 @@ describe("loadAssetViewModel", () => {
     assert.equal(model.summary.totalAssets, 7);
     assert.deepEqual(
       model.categories.map((category) => category.id),
-      ["overview", "components", "services", "business", "tokens", "product", "metaphors", "reports"],
+      ["overview", "components", "pages", "services", "business", "tokens", "product", "metaphors", "reports"],
     );
     assert.ok(model.assets.some((asset) => asset.name === "Button" && asset.category === "components"));
     assert.ok(model.assets.some((asset) => asset.name === "auth.register" && asset.category === "services"));
@@ -308,10 +323,10 @@ describe("loadAssetViewModel", () => {
   });
 
   it("returns a clear missing central package model", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-web-missing-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-web-library-missing-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-web-missing-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-web-library-missing-"));
     roots.push(root, libraryRoot);
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+    process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
 
     const model = await loadAssetViewModel(root);
 

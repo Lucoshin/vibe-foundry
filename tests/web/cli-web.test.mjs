@@ -11,11 +11,11 @@ describe("CLI web command", () => {
     });
 
     assert.equal(result.exitCode, 1);
-    assert.match(messages.join(""), /vibe-foundry distill <project-root>/);
-    assert.match(messages.join(""), /vibe-foundry distill-book <book-path>/);
-    assert.match(messages.join(""), /vibe-foundry web <project-root> \[--port <port>\]/);
+    assert.match(messages.join(""), /vibe distill <project-root>/);
+    assert.match(messages.join(""), /vibe distill-book <book-path>/);
+    assert.match(messages.join(""), /vibe web <project-root> \[--port <port>\]/);
     assert.doesNotMatch(messages.join(""), /--preview-port/);
-    assert.doesNotMatch(messages.join(""), /vibe-foundry preview <project-root>/);
+    assert.doesNotMatch(messages.join(""), /vibehub preview <project-root>/);
   });
 
   it("distills a book from the distill-book command", async () => {
@@ -106,6 +106,6 @@ describe("CLI web command", () => {
 
     assert.equal(result.exitCode, 1);
     assert.doesNotMatch(messages.join(""), /5174/);
-    assert.doesNotMatch(messages.join(""), /vibe-foundry preview <project-root>/);
+    assert.doesNotMatch(messages.join(""), /vibehub preview <project-root>/);
   });
 });

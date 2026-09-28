@@ -6,18 +6,16 @@ it("keeps empty-library guidance inside the list and distinguishes filtered resu
   const { renderWebAppHtml } = await import("../../dist/web/frontend.js");
   const webAppJs = renderWebAppHtml().match(/<script>([\s\S]*)<\/script>/)[1];
   const list = { innerHTML: "", className: "" };
-  const context = vm.createContext({ list, document: { querySelectorAll: () => [] }, bindComponentPreviewActions: () => {} });
-  vm.runInContext("const state = { category: 'overview', model: { assets: [] }, selected: null }; const byId = () => list; const filteredAssets = () => [];", context);
+  const context = vm.createContext({ list, document: { querySelectorAll: () => [] }, bindComponentPreviewActions: () => {}, renderAssetPagination: () => {} });
+  vm.runInContext("const state = { model: { assets: [] }, selected: null }; const byId = () => list; const filteredAssets = () => [];", context);
   const start = webAppJs.indexOf("function renderList() {");
   const end = webAppJs.indexOf("function editComponentLabels(", start);
   vm.runInContext(webAppJs.slice(start, end), context);
-  for (const category of ["overview", "components", "reports"]) {
-    vm.runInContext(`state.category = '${category}'; renderList();`, context);
-    assert.match(list.innerHTML, /还没有资产/);
-    assert.match(list.innerHTML, /开始使用/);
-    assert.match(list.innerHTML, /distill &lt;project-root&gt;/);
-  }
-  vm.runInContext("state.category = 'components'; state.model.assets = [{ id: 'existing' }]; renderList();", context);
+  vm.runInContext("renderList();", context);
+  assert.match(list.innerHTML, /还没有资产/);
+  assert.match(list.innerHTML, /开始使用/);
+  assert.match(list.innerHTML, /distill &lt;project-root&gt;/);
+  vm.runInContext("state.model.assets = [{ id: 'existing' }]; renderList();", context);
   assert.match(list.innerHTML, /没有匹配/);
   assert.doesNotMatch(list.innerHTML, /还没有资产/);
 });
@@ -65,23 +63,23 @@ describe("component view state", () => {
     const script = renderWebAppHtml().match(/<script>([\s\S]*?)<\/script>/)[1];
     const first = { id: "project-a:components:button", category: "components", name: "Button", labels: ["A"] };
     const second = { id: "project-b:components:button", category: "components", name: "Button", labels: ["B"] };
-    const oldKey = "vibe-foundry:component-view:VibeFoundry Library";
+    const oldKey = "vibehub:component-view:VibeHub Library";
     const storage = new Map([[oldKey, JSON.stringify({ deletedComponentIds: ["components:Button"], componentLabelOverrides: { "components:Button": ["Legacy"] } })]]);
     const context = vm.createContext({
-      model: { project: { sourceProject: "VibeFoundry Library" }, assets: [first, second] },
+      model: { project: { sourceProject: "VibeHub Library" }, assets: [first, second] },
       localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
       window: { prompt: () => "B-only", confirm: () => true },
     });
     vm.runInContext(script.slice(0, script.indexOf("\nfunction startWebApp()")), context);
     vm.runInContext("state.model = model; render = () => {}; loadComponentState();", context);
     assert.equal(storage.has(oldKey), false);
-    assert.equal(vm.runInContext("visibleComponents().length", context), 2);
+    assert.equal(vm.runInContext("filteredAssets().length", context), 2);
     vm.runInContext("editComponentLabels(model.assets[1].id)", context);
     assert.equal(vm.runInContext("componentLabelsFor(model.assets[0]).join(',')", context), "A");
     assert.equal(vm.runInContext("componentLabelsFor(model.assets[1]).join(',')", context), "B-only");
     vm.runInContext("deleteComponent(model.assets[1].id)", context);
-    assert.equal(vm.runInContext("visibleComponents()[0].id", context), first.id);
-    assert.equal(vm.runInContext("visibleComponents().length", context), 1);
+    assert.equal(vm.runInContext("filteredAssets()[0].id", context), first.id);
+    assert.equal(vm.runInContext("filteredAssets().length", context), 1);
     assert.notEqual(vm.runInContext("componentStorageKey()", context), oldKey);
   });
 });

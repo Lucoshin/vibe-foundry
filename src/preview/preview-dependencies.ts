@@ -41,5 +41,5 @@ export function previewFailureMessage(code) {
   if (code === 'PREVIEW_RUNTIME_UNSUPPORTED') return '当前 Vue 版本不在预览支持范围内；支持 Vue 2.6、2.7 和 Vue 3。';
   if (code === 'PREVIEW_DEPENDENCIES_MISSING') return '缺少组件运行依赖。请在源项目安装匹配版本的依赖，再重新导入炼化。';
   if (code === 'PREVIEW_COMPILER_MISSING' || code === 'PREVIEW_COMPILER_MISMATCH') return 'Vue 模板编译器缺失或版本不匹配，请在源项目安装与 Vue 完全同版本的 vue-template-compiler。';
-  return '组件预览生成失败。请检查源码与运行依赖，修复后重新导入炼化。';
+  return '组件预览构建失败，尚未确认是预览适配还是项目依赖问题。请查看技术信息；这不表示源组件本身不可用。';
 }

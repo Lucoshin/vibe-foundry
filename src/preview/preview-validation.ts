@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
 
-import { canonicalSerialize } from "./preview-action.js";
+import { canonicalSerialize } from "../utils/canonical-json.js";
 
 const browserMountValidatorSpec = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   source: "browser-mount",
   assertions: [
     "served-current-action",
     "component-mounted",
-    "non-empty-preview-canvas",
+    "visible-component-content",
   ],
 };
 
 export const browserMountValidatorDigest = createHash("sha256")
-  .update("vibe-preview-validator-v1\0")
+  .update("vibe-preview-validator-v2\0")
   .update(canonicalSerialize(browserMountValidatorSpec))
   .digest("hex");
 

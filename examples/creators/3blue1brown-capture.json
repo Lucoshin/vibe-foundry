@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "0.1.0",
+  "platform": "bilibili",
+  "account": {
+    "id": "88461692",
+    "name": "3Blue1Brown",
+    "url": "https://space.bilibili.com/88461692",
+    "description": "中国官方账号。深入浅出、直观明了地分享数学之美。资助页面：www.patreon.com/3blue1brown"
+  },
+  "collectedAt": "2026-09-17T12:37:45Z",
+  "sampling": {
+    "method": "公开搜索 3Blue1Brown 后人工选择同账号的向量、微积分合集与熵三项，再用 bili-cli 读取各项详情及主页；搜索相关性样本，不声称最新或高表现分层抽样。",
+    "windowStart": "2016-08-24T09:22:26Z",
+    "windowEnd": "2026-09-17T12:37:45Z",
+    "limitations": [
+      "仅选取 3 项搜索样本，不覆盖完整账号。",
+      "未取得字幕、封面视觉分析、评论样本或受众统计；不能据此归纳视频论证结构。",
+      "发布时间来自同作品搜索 API 结果，名称与简介来自作品详情；采集快照仅反映本次读取。"
+    ]
+  },
+  "works": [
+    {
+      "id": "BV1Ys411k7yQ",
+      "url": "https://www.bilibili.com/video/BV1Ys411k7yQ",
+      "title": "【熟肉】线性代数的本质 - 01 - 向量究竟是什么？",
+      "description": "视频源地址：https://www.youtube.com/watch?v=fNk_zzaMoSs\n线性代数的本质（Essense of Linear Algebra）系列\n作者：@3Blue1Brown\n\n听译、时间轴、压制：@Solara570\n\n01 - 这个问题看似简单，但实际并非如此。",
+      "publishedAt": "2016-08-24T09:22:26Z",
+      "transcript": {
+        "status": "unavailable",
+        "reason": "bili-cli 获取播放器字幕信息要求 sessdata；当前未提供登录凭据，未读取字幕或观看视频。"
+      }
+    },
+    {
+      "id": "BV1qW411N7FU",
+      "url": "https://www.bilibili.com/video/BV1qW411N7FU",
+      "title": "【官方双语/合集】微积分的本质 - 系列合集",
+      "description": "《微积分的本质》合集。\n更多信息请见各分集简介和评论置顶",
+      "publishedAt": "2018-06-03T08:03:10Z",
+      "transcript": {
+        "status": "unavailable",
+        "reason": "bili-cli 获取播放器字幕信息要求 sessdata；当前未提供登录凭据，未读取字幕或观看视频。"
+      }
+    },
+    {
+      "id": "BV1yVNU6xERx",
+      "url": "https://www.bilibili.com/video/BV1yVNU6xERx",
+      "title": "【官方双语】压缩即智能：Part1，重新发明熵",
+      "description": "本视频从香农与妻子猜字母的经典实验切入，梳理信息论中语言可压缩性的底层原理  \nReinventing Entropy | Compression is Intelligence Part 1  \nhttps://youtu.be/l6DKRf-fAAM   \n翻译&时间轴：贰鼠  校正：畏狐之狐  \n感谢观众的支持: https://3b1b.co/support 一键三联与分享，也是最大的支持！",
+      "publishedAt": "2026-07-14T01:00:00Z",
+      "transcript": {
+        "status": "unavailable",
+        "reason": "bili-cli 获取播放器字幕信息要求 sessdata；当前未提供登录凭据，未读取字幕或观看视频。"
+      }
+    }
+  ]
+}

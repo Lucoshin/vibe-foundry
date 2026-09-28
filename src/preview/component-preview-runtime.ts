@@ -1,3 +1,9 @@
+import { hasVisiblePreviewContent } from './preview-mount-check.js';
+import { canKeepRenderedPreview } from './preview-runtime-errors.js';
+import { previewBooleanControls, previewModelListeners } from './preview-prop-controls.js';
+import { writeUniStaticResources } from './uni-static-resources.js';
+import { canonicalSerialize } from "../utils/canonical-json.js";
+import { writeWebsitePreviewBundle } from "../website/website-preview.js";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -7,7 +13,6 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  canonicalSerialize,
   createPreviewActionSpec,
   previewActionDigest,
 } from "./preview-action.js";
@@ -19,6 +24,16 @@ import {
 } from "../library/asset-library.js";
 import { listFiles } from "../utils/files.js";
 import { createSafeProcessEnvironment } from "../utils/process-environment.js";
+import { discoverWebpackSvgSprites } from "./webpack-context-preview.js";
+import { discoverUniPlatformDefine } from "./uni-platform-define.js";
+import { discoverProjectAliases } from "./project-aliases.js";
+import { uniPreviewHostSource } from "./uni-official-api-host.js";
+import { discoverUniPageContext } from "./uni-page-context.js";
+import { discoverUniCloudHost } from "./uni-cloud-host.js";
+import { discoverUniKuRootHost } from './uni-ku-root-host.js';
+import { buildFrontendSourceIndex } from '../analyzers/frontend-source-index.js';
+import { discoverVue2SourceRegistrations, renderVue2SourceRegistrations } from './vue2-source-registrations.js';
+import { discoverVue3SourceGlobals, renderVue3SourceGlobals } from './vue3-source-globals.js';
 
 const schemaVersion = "0.1.0";
 const reactRuntime = "vite-react";
@@ -54,8 +69,23 @@ function fullFingerprint(value) {
 function defaultPreviewBuilderDigest() {
   return createHash("sha256")
     .update(readFileSync(fileURLToPath(import.meta.url)))
+    .update(readFileSync(new URL("./preview-mount-check.js", import.meta.url)))
+    .update(readFileSync(new URL("./preview-runtime-errors.js", import.meta.url)))
+    .update(readFileSync(new URL("./preview-prop-controls.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-void-inputs.js", import.meta.url)))
     .update(readFileSync(new URL("./vue26-preview-plugin.js", import.meta.url)))
     .update(readFileSync(new URL("./preview-dependencies.js", import.meta.url)))
+    .update(readFileSync(new URL("./webpack-context-preview.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-platform-define.js", import.meta.url)))
+    .update(readFileSync(new URL("./project-aliases.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-official-api-host.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-page-context.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-cloud-host.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-json-config.js", import.meta.url)))
+    .update(readFileSync(new URL("./vue2-source-registrations.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-ku-root-host.js", import.meta.url)))
+    .update(readFileSync(new URL("./vue3-source-globals.js", import.meta.url)))
+    .update(readFileSync(new URL("./uni-static-resources.js", import.meta.url)))
     .digest("hex");
 }
 
@@ -112,14 +142,19 @@ export function buildComponentPreviewRegistry(components, options = {}) {
     const id = previewIdFor(component, options.projectRoot);
     const runtime = runtimeForComponent(component);
     const blockers = [];
+    const isUniPage = component.kind === 'page' && component.platformRuntime === 'uni-h5';
+    const registeredPage = isUniPage ? options.runtimeContext?.uniPages?.pages?.find(page => '/' + page.path === component.route) : null;
+    const uniPage = registeredPage ? { route: component.route, style: registeredPage.style, globalStyle: options.runtimeContext.uniPages.globalStyle, nvue: options.runtimeContext.uniPages.nvue } : null;
+    if (isUniPage && !uniPage) blockers.push(options.runtimeContext?.uniPages?.error ?? '当前页面未出现在官方 H5 页面注册结果中。');
     if (!component.filePath) {
       blockers.push("Missing component source path.");
     }
     if (!isReadyExport(component)) {
       blockers.push("Missing component export contract.");
     }
-    const limitations = [];
-    if (!component.previewScenario) {
+    const limitations = [...(component.staticResourceLimitations ?? [])];
+    const hasPageEntry = component.kind === 'page' && (isUniPage ? Boolean(uniPage) : Boolean(component.route));
+    if (!component.previewScenario && !hasPageEntry) {
       limitations.push("missing-source-scenario");
     }
     if (component.previewScenario?.unresolvedProps?.length > 0) {
@@ -137,7 +172,7 @@ export function buildComponentPreviewRegistry(components, options = {}) {
     }
     const status = !buildable ? "blocked" : "degraded";
     const actionSpec = createPreviewActionSpec({
-      component,
+      component: { ...component, uniPage },
       runtimeContext: options.runtimeContext,
       builderDigest: options.builderDigest ?? defaultPreviewBuilderDigest(),
       toolchain: options.toolchain ?? defaultPreviewToolchain(runtime),
@@ -158,6 +193,10 @@ export function buildComponentPreviewRegistry(components, options = {}) {
       id,
       componentName: component.name,
       componentPath: normalizePath(component.filePath),
+      kind: component.kind ?? 'component',
+      ...(component.route ? { route: component.route } : {}),
+      ...(uniPage ? { uniPage } : {}),
+      ...(component.staticResources ? { staticResources: component.staticResources } : {}),
       exportMode: component.exportMode ?? "unknown",
       exportName: component.exportName ?? "",
       status,
@@ -232,7 +271,7 @@ function scenarioPropsCode(scenario, options = {}) {
   }
   for (const eventName of scenario.events ?? []) {
     const propName = eventName.startsWith("on") ? eventName : `on${eventName[0]?.toUpperCase()}${eventName.slice(1)}`;
-    props.push(`${propName}: () => {}`);
+    props.push(`${propertyKeyCode(propName)}: () => {}`);
   }
   return `{ ${props.join(", ")} }`;
 }
@@ -294,26 +333,43 @@ installPreviewNetworkGuard();`;
 
 function vuePreviewFileFor(preview, options = {}) {
   const importPath = componentImportPath(preview.componentPath, options);
+  const isUniPage = preview.kind === 'page' && preview.platformRuntime === 'uni-h5' && preview.uniPage;
   const sourceSlotText = preview.previewScenario?.slots?.default;
   const slotTemplate = sourceSlotText
     ? `    ${escapeVueTemplateText(sourceSlotText)}`
     : "";
   const componentMarkup = slotTemplate
-    ? `<Component v-bind="props">
+    ? `<Component v-bind="props" v-on="listeners">
 ${slotTemplate}
   </Component>`
-    : `<Component v-bind="props" />`;
+    : `<Component v-bind="props" v-on="listeners" />`;
   return `<template>
-  ${componentMarkup}
+  <div>
+    <details v-if="controls.length" data-vibe-preview-notice style="position:relative;z-index:2147483647;background:white;color:#334155;padding:6px;border:1px solid #cbd5e1;font:12px sans-serif;margin-bottom:12px;text-align:left">
+      <summary>预览入参（仅此场景）</summary>
+      <label v-for="control in controls" :key="control.name" style="display:inline-flex;gap:4px;margin:6px">
+        <input type="checkbox" v-model="props[control.name]" />{{ control.name }}
+      </label>
+    </details>
+    ${isUniPage ? `<PageComponent><template #page>${componentMarkup}</template></PageComponent>` : componentMarkup}
+  </div>
 </template>
 
-${options.vueVersion?.startsWith("2.") ? "<script>" : "<script setup>"}
+<script>
 import Component from ${jsString(importPath)};
-
-const props = ${propsCodeFor(preview.componentName, preview.previewScenario)};
-${options.vueVersion?.startsWith("2.") ? "export default { components: { Component }, data() { return { props }; } };" : ""}
+${isUniPage ? 'import { setupPage, PageComponent } from "@dcloudio/uni-h5";\nimport { wrapUniPreviewPage } from "../uni-preview-host.js";\nconst PreviewComponent = wrapUniPreviewPage(setupPage, Component);' : ''}
+${previewBooleanControls.toString()}
+${previewModelListeners.toString()}
+export default { components: { ${isUniPage ? 'Component: PreviewComponent, PageComponent' : 'Component'} }, data() {
+  const props = ${preview.previewScenario ? objectCode(preview.previewScenario.props ?? {}) : '{}'};
+  const listeners = previewModelListeners(Component, props, ${options.vueVersion?.startsWith('2.') ? 2 : 3}, (name, value) => { this.props[name] = value; });
+  const controls = previewBooleanControls(Component, props);
+  for (const control of controls) if (!Object.prototype.hasOwnProperty.call(props, control.name)) props[control.name] = control.value;
+  return { props, controls, listeners };
+} };
 </script>
 `;
+
 }
 
 function reactAppFileFor(readyPreviews, options = {}) {
@@ -360,14 +416,43 @@ function triggerDemoInteraction() {
   target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
+${hasVisiblePreviewContent.toString()}
+let previewContentObserver = null;
 function reportPreviewMounted(previewId, actionDigest) {
   if (!previewId) return;
+  previewContentObserver?.disconnect();
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     const canvas = document.querySelector("[data-vibe-preview-canvas]");
-    if (!canvas || canvas.querySelector(".vibe-preview-empty")) return;
-    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {
-      method: "POST",
-    }).catch(() => {});
+    if (!canvas) return;
+    function stopObserving() {
+      previewContentObserver?.disconnect();
+      canvas.removeEventListener("transitionend", check);
+      canvas.removeEventListener("animationend", check);
+    }
+    function check() {
+      if (canvas.querySelector(".vibe-preview-empty")) { canvas.querySelector("[data-vibe-empty-notice]")?.remove(); stopObserving(); return; }
+      const notice = canvas.querySelector('[data-vibe-empty-notice]');
+      if (!hasVisiblePreviewContent(canvas)) {
+        if (!notice) {
+          const message = document.createElement('p');
+          message.setAttribute('data-vibe-preview-notice', '');
+          message.setAttribute('data-vibe-empty-notice', '');
+          message.textContent = '当前场景没有可见内容。可展开预览入参切换显示状态；仅提供插槽或上下文的组件需要真实调用场景。';
+          message.style.cssText = 'font:13px/1.6 sans-serif;color:#64748b;max-width:420px';
+          canvas.append(message);
+        }
+        return;
+      }
+      stopObserving();
+      notice?.remove();
+      if (previews.find(item => item.id === previewId)?.limitations?.some(item => item !== "runtime-validation-pending")) return;
+      fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {method:"POST"}).catch(() => {});
+    }
+    canvas.addEventListener("transitionend", check);
+    canvas.addEventListener("animationend", check);
+    previewContentObserver = new MutationObserver(() => window.requestAnimationFrame(check));
+    previewContentObserver.observe(canvas, {childList:true,subtree:true,attributes:true,characterData:true});
+    check();
   }));
 }
 
@@ -521,6 +606,8 @@ createRoot(document.getElementById("root")).render(<App />);
 
 function vueAppFileFor(readyPreviews, options = {}) {
   const isVue2 = options.vueVersion?.startsWith("2.");
+  const hasUniH5 = readyPreviews.some((preview) => preview.platformRuntime === "uni-h5");
+  const hasUniPage = readyPreviews.some((preview) => preview.uniPage);
   const uniComponentExports = {
     button: "Button", checkbox: "Checkbox", "checkbox-group": "CheckboxGroup", image: "Image",
     input: "Input", label: "Label", navigator: "Navigator", picker: "Picker",
@@ -533,28 +620,39 @@ function vueAppFileFor(readyPreviews, options = {}) {
     .flatMap((preview) => preview.platformComponents ?? []))]
     .filter((name) => uniComponentExports[name]);
   const uniHostImports = uniComponents.length > 0
-    ? `import { ${uniComponents.map((name) => uniComponentExports[name]).join(", ")} } from "@dcloudio/uni-h5";\n${uniComponents.map((name) => `import "@dcloudio/uni-components/style/${name}.css";`).join("\n")}`
+    ? `import { ${uniComponents.map((name) => uniComponentExports[name]).join(", ")} } from "@dcloudio/uni-h5";\n${[...new Set(uniComponents.flatMap(name => name === "picker" ? [name, "resize-sensor", "picker-view", "picker-view-column"] : [name]))].map((name) => `import "@dcloudio/${name === "picker" ? "uni-h5" : "uni-components"}/style/${name}.css";`).join("\n")}`
     : "";
   const providers = options.runtimeContext?.providers ?? [];
   const hasPinia = providers.includes("vue-pinia");
   const hasRouter = providers.includes("vue-router-memory");
   const hasElement = isVue2 && providers.includes("vue2-element-ui");
+  const hasSourceRegistrations = isVue2 && Boolean(options.runtimeContext?.vue2SourceRegistrations);
+  const kuRoot = hasUniH5 && options.runtimeContext?.uniKuRoot;
+  const hasSourceGlobals = !isVue2 && Boolean(options.runtimeContext?.vue3SourceGlobals);
   const providerImports = [
+    hasSourceGlobals ? 'import { installSourceGlobals } from "./vue3-source-globals.js";' : '',
+    kuRoot ? `import GlobalKuRoot from ${jsString(runtimeImportPath(kuRoot.rootFile, options))};` : '',
+    hasSourceRegistrations ? 'import { installSourceRegistrations } from "./vue2-source-registrations.js";' : '',
+    hasUniPage ? 'import { plugin as uniPagePlugin } from "@dcloudio/uni-h5";' : '',
     hasPinia ? 'import { createPinia } from "pinia";' : "",
     hasRouter ? (isVue2 ? 'import VueRouter from "vue-router";' : 'import { createMemoryHistory, createRouter } from "vue-router";') : "",
-    hasElement ? 'import ElementUI from "element-ui";' : "",
+    hasElement && !hasSourceRegistrations ? 'import ElementUI from "element-ui";' : "",
   ].filter(Boolean).join("\n");
   const providerSetup = isVue2 ? [
-    hasElement ? "Vue.use(ElementUI);" : "",
+    hasElement && !hasSourceRegistrations ? "Vue.use(ElementUI);" : "",
+    hasSourceRegistrations ? 'const sourceProviders = installSourceRegistrations();' : '',
     hasRouter ? 'Vue.use(VueRouter);\nconst router = new VueRouter({ mode: "abstract", routes: [] });' : "",
-    'new Vue({ ' + (hasRouter ? "router, " : "") + 'render: h => h(App) }).$mount("#root");',
+    'new Vue({ ' + (hasSourceRegistrations ? '...sourceProviders, ' : '') + (hasRouter ? "router, " : "") + 'render: h => h(App) }).$mount("#root");',
   ].filter(Boolean).join("\n") : [
     "const previewApp = createApp(App);",
+    kuRoot ? 'previewApp.component("global-ku-root", GlobalKuRoot);' : '',
+    hasUniPage ? 'previewApp.use(uniPagePlugin);' : '',
     ...uniComponents.flatMap((name) => [
       `previewApp.component(${jsString(name)}, ${uniComponentExports[name]});`,
       `previewApp.component(${jsString(`uni-${name}`)}, ${uniComponentExports[name]});`,
     ]),
     hasPinia ? "previewApp.use(createPinia());" : "",
+    hasSourceGlobals ? 'installSourceGlobals(previewApp);' : '',
     hasRouter ? 'const previewRouter = createRouter({ history: createMemoryHistory(), routes: [] });\npreviewApp.use(previewRouter);' : "",
     'previewApp.mount("#root");',
   ].filter(Boolean).join("\n");
@@ -566,7 +664,9 @@ function vueAppFileFor(readyPreviews, options = {}) {
     .join("\n");
   return `${isVue2 ? 'import Vue from "vue";' : 'import { createApp, h, markRaw } from "vue";'}
 ${uniHostImports}
+${hasUniH5 ? 'import { uniCloudReady } from "./uni-preview-host.js";' : ""}
 ${providerImports}
+${(options.runtimeContext?.webpackSvgSprites?.entries ?? []).map((entry) => `import ${jsString(runtimeImportPath(entry, options))};`).join("\n")}
 import { previews } from "./preview-data.js";
 ${styleImports}
 import "./vibe-preview.css";
@@ -576,69 +676,6 @@ ${modules}
 };
 
 ${networkGuardSource(options.runtimeContext)}
-
-function createPreviewCanvasContext() {
-  return {
-    setFillStyle() {},
-    fillRect() {},
-    setStrokeStyle() {},
-    setLineWidth() {},
-    setLineCap() {},
-    setLineJoin() {},
-    beginPath() {},
-    moveTo() {},
-    lineTo() {},
-    stroke() {},
-    draw(reserve, callback) {
-      const done = typeof reserve === "function" ? reserve : callback;
-      if (typeof done === "function") window.setTimeout(done, 0);
-    },
-  };
-}
-
-function previewSystemInfo() {
-  return {
-    platform: "web",
-    windowWidth: window.innerWidth || 420,
-    windowHeight: window.innerHeight || 760,
-    statusBarHeight: 0,
-    safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
-  };
-}
-
-function installUniPreviewMock() {
-  if (globalThis.uni) return;
-  const resizeHandlers = new Set();
-  globalThis.uni = {
-    getSystemInfoSync: previewSystemInfo,
-    onWindowResize(handler) {
-      if (typeof handler === "function") resizeHandlers.add(handler);
-    },
-    offWindowResize(handler) {
-      resizeHandlers.delete(handler);
-    },
-    createCanvasContext() {
-      return createPreviewCanvasContext();
-    },
-    previewImage() {},
-    showToast() {},
-    hideToast() {},
-    navigateBack() {},
-    canvasToTempFilePath(options) {
-      window.setTimeout(() => {
-        if (typeof options?.success === "function") {
-          options.success({ tempFilePath: "data:image/png;base64," });
-        }
-      }, 0);
-    },
-  };
-  window.addEventListener("resize", () => {
-    const size = previewSystemInfo();
-    resizeHandlers.forEach((handler) => handler(size));
-  });
-}
-
-installUniPreviewMock();
 
 function selectedPreviewId() {
   const params = new URLSearchParams(window.location.search);
@@ -662,16 +699,53 @@ function triggerDemoInteraction() {
   target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
+${hasVisiblePreviewContent.toString()}
+let previewContentObserver = null;
 function reportPreviewMounted(previewId, actionDigest) {
   if (!previewId) return;
+  previewContentObserver?.disconnect();
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     const canvas = document.querySelector("[data-vibe-preview-canvas]");
-    if (!canvas || canvas.querySelector(".vibe-preview-empty")) return;
-    fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {
-      method: "POST",
-    }).catch(() => {});
+    if (!canvas) return;
+    function stopObserving() {
+      previewContentObserver?.disconnect();
+      canvas.removeEventListener("transitionend", check);
+      canvas.removeEventListener("animationend", check);
+    }
+    function check() {
+      if (canvas.querySelector(".vibe-preview-empty")) { canvas.querySelector("[data-vibe-empty-notice]")?.remove(); stopObserving(); return; }
+      const notice = canvas.querySelector('[data-vibe-empty-notice]');
+      if (!hasVisiblePreviewContent(canvas)) {
+        if (!notice) {
+          const message = document.createElement('p');
+          message.setAttribute('data-vibe-preview-notice', '');
+          message.setAttribute('data-vibe-empty-notice', '');
+          message.textContent = '当前场景没有可见内容。可展开预览入参切换显示状态；仅提供插槽或上下文的组件需要真实调用场景。';
+          message.style.cssText = 'font:13px/1.6 sans-serif;color:#64748b;max-width:420px';
+          canvas.append(message);
+        }
+        return;
+      }
+      stopObserving();
+      notice?.remove();
+      if (previews.find(item => item.id === previewId)?.limitations?.some(item => item !== "runtime-validation-pending")) return;
+      fetch("/api/component-preview-validation/" + encodeURIComponent(previewId) + "?actionDigest=" + encodeURIComponent(actionDigest), {method:"POST"}).catch(() => {});
+    }
+    canvas.addEventListener("transitionend", check);
+    canvas.addEventListener("animationend", check);
+    previewContentObserver = new MutationObserver(() => window.requestAnimationFrame(check));
+    previewContentObserver.observe(canvas, {childList:true,subtree:true,attributes:true,characterData:true});
+    check();
   }));
 }
+
+function previewErrorMessage(error) {
+  return error instanceof ReferenceError && error.message === "uniCloud is not defined"
+    ? "该组件依赖 uniCloud 云运行环境，当前独立预览未连接，无法展示；未执行云端操作。"
+    : error instanceof Error ? error.message : String(error);
+}
+
+${canKeepRenderedPreview.toString()}
 
 const App = {
   data() {
@@ -679,6 +753,7 @@ const App = {
       activeId: selectedPreviewId(),
       ActiveComponent: null,
       loadError: "",
+      runtimeIssue: "",
       embedded: isEmbeddedPreview(),
       previewResizeObserver: null,
       previewRaf: 0,
@@ -710,14 +785,16 @@ const App = {
       window.cancelAnimationFrame(this.previewRaf);
     }
   },
-  errorCaptured(error) {
-    this.loadError = error instanceof Error ? error.message : String(error);
+  errorCaptured(error, _instance, info) {
+    if (canKeepRenderedPreview(info)) this.runtimeIssue = previewErrorMessage(error);
+    else this.loadError = previewErrorMessage(error);
     return false;
   },
   methods: {
     async loadPreview() {
       this.ActiveComponent = null;
       this.loadError = "";
+      this.runtimeIssue = "";
       const activePreview = this.activePreview;
       const loadPreview = activePreview ? previewModules[activePreview.id] : null;
       if (!loadPreview) {
@@ -725,14 +802,15 @@ const App = {
         return;
       }
       try {
+        ${hasUniH5 ? 'await uniCloudReady;' : ''}
         const module = await loadPreview();
         this.ActiveComponent = ${isVue2 ? "Vue.extend(module.default)" : "markRaw(module.default)"};
         this.$nextTick(() => {
           this.fitPreview();
-          reportPreviewMounted(activePreview.id, activePreview.actionDigest);
+          if (!this.runtimeIssue && !this.loadError) reportPreviewMounted(activePreview.id, activePreview.actionDigest);
         });
       } catch (error) {
-        this.loadError = error instanceof Error ? error.message : String(error);
+        this.loadError = previewErrorMessage(error);
       }
     },
     fitPreview() {
@@ -791,6 +869,7 @@ const App = {
       sidebar,
       h("section", { class: "vibe-preview-main" }, [
         header,
+        this.runtimeIssue ? h("div", { class: "vibe-preview-empty", ${isVue2 ? 'attrs: { "data-vibe-preview-notice": "" }' : '"data-vibe-preview-notice": ""'} }, "部分操作未完成：" + this.runtimeIssue) : null,
         h("div", { ref: "previewCanvas", class: "vibe-preview-canvas", ${isVue2 ? 'attrs: { "data-vibe-preview-canvas": "" }' : '"data-vibe-preview-canvas": ""'} }, [canvasContent]),
       ]),
     ]);
@@ -818,24 +897,25 @@ function viteConfigFile(options = {}) {
     ? `const { vue26PreviewPlugin } = await import(${jsString(new URL("./vue26-preview-plugin.js", import.meta.url).href)});
 const vue = () => vue26PreviewPlugin(projectRoot);
 `
-    : `const vuePluginModuleUrl = pathToFileURL(requireFromPreviewToolchain.resolve(${jsString(isVue27 ? "@vibe-foundry/vue2-preview-toolchain" : "@vitejs/plugin-vue")})).href;
+    : `const vuePluginModuleUrl = pathToFileURL(requireFromPreviewToolchain.resolve(${jsString(isVue27 ? "@vibehub/vue2-preview-toolchain" : "@vitejs/plugin-vue")})).href;
 const { default: vue } = await import(vuePluginModuleUrl);
 `;
   const vuePluginEntry = hasVuePreviews ? `    {
-      name: "vibe-foundry-uni-conditional-loader",
+      name: "vibehub-uni-conditional-loader",
       enforce: "pre",
       transform(code, id) {
         const sourcePath = id.split("?")[0];
         if (!projectVueSourcePattern.test(sourcePath) || sourcePath.includes("node_modules")) {
           return null;
         }
+        if (resolve(sourcePath).startsWith(resolve(previewRoot, "src") + sep)) return null;
         const prepared = injectVueAutoImports(stripUniConditionals(code));
-        return useUniH5 ? normalizeUniComponentTags(prepared) : prepared;
+        return useUniH5 ? normalizeUniComponentTags(closeUniVoidInputs(prepared)) : prepared;
       },
     },
     ${isVue27 ? 'vue({ compiler: createRequire(resolve(projectRoot, "package.json"))("vue/compiler-sfc") }),' : "vue(),"}
     {
-      name: "vibe-foundry-vue-ts-script-loader",
+      name: "vibehub-vue-ts-script-loader",
       enforce: "post",
       transform(code, id) {
         if (!id.includes(".vue?vue&type=script") || !id.includes("lang.ts") || id.includes("node_modules")) {
@@ -856,27 +936,27 @@ const { default: UnoCSS } = await import(unoCssModuleUrl);
     : "";
   const unoCssPluginEntry = hasUnoCss ? "    UnoCSS(),\n" : "";
   const uniRpxPluginEntry = hasUniH5 ? `    {
-      name: "vibe-foundry-uni-rpx",
+      name: "vibehub-uni-rpx",
       enforce: "post",
       transform(code, id) {
         if (!id.includes("type=style") && !/\\.(?:css|scss|sass|less|styl|stylus)$/.test(id.split("?")[0])) {
           return null;
         }
         return code.replace(/(-?(?:\\d+\\.)?\\d+)rpx\\b/g, (_, value) => {
-          return "calc(" + value + " * var(--vibe-foundry-rpx-unit))";
+          return "calc(" + value + " * var(--vibehub-rpx-unit))";
         });
       },
       generateBundle(_options, bundle) {
         for (const asset of Object.values(bundle)) {
           if (asset.type !== "asset" || !asset.fileName.endsWith(".css")) continue;
           asset.source = String(asset.source).replace(/(-?(?:\\d+\\.)?\\d+)rpx\\b/g, (_, value) => {
-            return "calc(" + value + " * var(--vibe-foundry-rpx-unit))";
+            return "calc(" + value + " * var(--vibehub-rpx-unit))";
           });
         }
       },
     },
 ` : "";
-  return `import { dirname, resolve } from "node:path";
+  return `import { dirname, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -988,14 +1068,20 @@ const requireFromPreviewToolchain = createRequire(${jsString(fileURLToPath(impor
 const vitePackageRoot = dirname(requireFromPreviewToolchain.resolve("vite/package.json"));
 const viteModuleUrl = pathToFileURL(resolve(vitePackageRoot, "dist/node/index.js")).href;
 const { transformWithEsbuild } = await import(viteModuleUrl);
-const previewBase = process.env.VIBE_FOUNDRY_PREVIEW_BASE || "/";
+const { closeUniVoidInputs } = await import(${jsString(new URL("./uni-void-inputs.js", import.meta.url).href)});
+const { webpackContextPreviewPlugin } = await import(${jsString(new URL("./webpack-context-preview.js", import.meta.url).href)});
+const { uniJsonConfigPlugin } = await import(${jsString(new URL("./uni-json-config.js", import.meta.url).href)});
+const { createUniKuRootPreviewPlugin } = await import(${jsString(new URL("./uni-ku-root-host.js", import.meta.url).href)});
+const previewBase = process.env.VIBEHUB_PREVIEW_BASE || "/";
 ${vuePluginImport}
 ${unoCssImport}
 
 export default {
   base: previewBase,
   resolve: {
+    ${hasVuePreviews ? 'extensions: [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json", ".vue"],' : ""}
     alias: [
+      ...${JSON.stringify(options.runtimeContext?.projectAliases?.aliases ?? [])},
       ${hasTaroH5 ? `{ find: /^@tarojs\\/components$/, replacement: createRequire(resolve(projectRoot, "package.json")).resolve("@tarojs/components/lib/react/index.js") },
       { find: /^@tarojs\\/taro$/, replacement: createRequire(resolve(projectRoot, "package.json")).resolve("@tarojs/plugin-platform-h5/dist/runtime/apis/index.js") },` : ""}
       { find: /^~/, replacement: resolve(projectRoot, "node_modules") + "/" },
@@ -1004,6 +1090,9 @@ export default {
     ],
   },
   plugins: [
+    createUniKuRootPreviewPlugin(projectRoot, ${JSON.stringify(hasUniH5 ? options.runtimeContext?.uniKuRoot ?? null : null)}),
+    uniJsonConfigPlugin(projectRoot, useUniH5),
+    webpackContextPreviewPlugin(projectRoot, ${JSON.stringify(options.runtimeContext?.webpackSvgSprites ?? null)}),
     {
       name: "vibe-preview-project-dependencies",
       enforce: "pre",
@@ -1015,7 +1104,7 @@ export default {
       },
     },
 ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
-      name: "vibe-foundry-ts-source-loader",
+      name: "vibehub-ts-source-loader",
       enforce: "pre",
       transform(code, id) {
         const sourcePath = id.split("?")[0];
@@ -1028,7 +1117,7 @@ ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
       },
     },
     {
-      name: "vibe-foundry-jsx-in-js-loader",
+      name: "vibehub-jsx-in-js-loader",
       enforce: "pre",
       transform(code, id) {
         const sourcePath = id.split("?")[0];
@@ -1048,6 +1137,8 @@ ${unoCssPluginEntry}${vuePluginEntry}${uniRpxPluginEntry}    {
     },
   },
   define: {
+    ${hasUniH5 && options.runtimeContext?.uniCloud ? '"process.env.UNI_PLATFORM": JSON.stringify("h5"), "process.env.UNI_CLOUD_PROVIDER": JSON.stringify("[]"), "process.env.UNI_SECURE_NETWORK_ENABLE": false, "process.env.UNI_SECURE_NETWORK_CONFIG": JSON.stringify("[]"),' : ''}
+    ${hasUniH5 && options.runtimeContext?.uniPlatformDefine ? `"PLATFORM": ${JSON.stringify(JSON.stringify(options.runtimeContext.uniPlatformDefine.value))},` : ""}
     ${hasTaroH5 ? '"global": "globalThis", "DEPRECATED_ADAPTER_COMPONENT": "false", "process.env.TARO_ENV": JSON.stringify("h5"), "process.env.FRAMEWORK": JSON.stringify("react"), "process.env.SUPPORT_TARO_POLYFILL": JSON.stringify("disabled"), "process.env.SUPPORT_DINGTALK_NAVIGATE": JSON.stringify("disabled"),' : ""}
     "process.env": {},
     ...(useUniH5 ? {
@@ -1094,10 +1185,10 @@ ${hasVuePreviews ? "" : `  esbuild: {
 
 function previewCssFile() {
   return `:root {
-  --vibe-foundry-rpx-unit: calc(100vw / 750);
+  --vibehub-rpx-unit: calc(100vw / 750);
 }
 @media (min-width: 961px) {
-  :root { --vibe-foundry-rpx-unit: 0.5px; }
+  :root { --vibehub-rpx-unit: 0.5px; }
 }
 html,
 body,
@@ -1201,7 +1292,7 @@ body,
   overflow-x: hidden;
   overflow-y: auto;
 }
-.vibe-preview-fit-stage {
+.vibe-preview-shell.embedded .vibe-preview-fit-stage {
   --vibe-preview-scale: 1;
   --vibe-preview-available-width: none;
   width: max-content;
@@ -1212,17 +1303,17 @@ body,
   transform-origin: center center;
   transition: transform 120ms ease;
 }
-.vibe-preview-fit-target {
+.vibe-preview-shell.embedded .vibe-preview-fit-target {
   width: max-content;
   min-width: var(--vibe-preview-available-width);
   height: max-content;
   max-width: none;
   max-height: none;
 }
-.vibe-preview-fit-target > * {
+.vibe-preview-shell.embedded .vibe-preview-fit-target > * {
   max-width: var(--vibe-preview-available-width);
 }
-.vibe-preview-fit-target :is(svg, img, canvas, video) {
+.vibe-preview-shell.embedded .vibe-preview-fit-target :is(svg, img, canvas, video) {
   max-width: var(--vibe-preview-available-width);
   object-fit: contain;
 }
@@ -1243,7 +1334,7 @@ body,
 
 function packageFile() {
   return `{
-  "name": "vibe-foundry-component-preview-runtime",
+  "name": "vibehub-component-preview-runtime",
   "private": true,
   "type": "module",
   "scripts": {
@@ -1259,7 +1350,7 @@ function indexHtmlFile(entryPath = "/src/App.jsx") {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VibeFoundry Component Preview</title>
+    <title>VibeHub Component Preview</title>
   </head>
   <body>
     <div id="root"></div>
@@ -1289,6 +1380,9 @@ export function buildPreviewRuntimeFiles(registry, options = {}) {
   const hasVuePreviews = runtime === vueRuntime;
   const hasUniH5 = readyPreviews.some((preview) => preview.platformRuntime === "uni-h5");
   const files = {
+    ...(hasVuePreviews && options.runtimeContext?.vue3SourceGlobals ? { 'src/vue3-source-globals.js': renderVue3SourceGlobals(options.runtimeContext.vue3SourceGlobals, filePath => runtimeImportPath(filePath, options)) } : {}),
+    ...(hasVuePreviews && options.runtimeContext?.vue2SourceRegistrations ? { 'src/vue2-source-registrations.js': renderVue2SourceRegistrations(options.runtimeContext.vue2SourceRegistrations, filePath => runtimeImportPath(filePath, options)) } : {}),
+    ...(hasUniH5 ? { "src/uni-preview-host.js": uniPreviewHostSource(readyPreviews[0].id, readyPreviews[0].uniPage, Boolean(options.runtimeContext?.uniCloud)) } : {}),
     "package.json": packageFile(),
     "index.html": indexHtmlFile(hasVuePreviews ? "/src/App.js" : "/src/App.jsx"),
     "vite.config.js": viteConfigFile({
@@ -1453,7 +1547,18 @@ export async function discoverPreviewRuntimeContext(projectRoot, options = {}) {
     /\b(?:import\.meta\.env|process\.env)\.([A-Z][A-Z0-9_]*)\b/g,
   )].map((match) => match[1]).filter((name, index, names) => names.indexOf(name) === index).sort();
   const globalStyles = await discoverProjectStyleImports(projectRoot, readSource);
+  const webpackSvgSprites = vueVersion?.startsWith("2.")
+    ? await discoverWebpackSvgSprites(projectRoot, readSource, runtimeSources) : null;
   const plugins = "unocss" in dependencies ? ["unocss"] : [];
+  const uniPlatformDefine = "@dcloudio/uni-h5" in dependencies ? await discoverUniPlatformDefine(readSource) : null;
+  const uniPages = "@dcloudio/uni-h5" in dependencies ? await discoverUniPageContext(projectRoot, readSource) : null;
+  const uniCloud = "@dcloudio/uni-h5" in dependencies ? await discoverUniCloudHost(projectRoot, runtimeSources) : null;
+  const uniKuRoot = "@dcloudio/uni-h5" in dependencies ? await discoverUniKuRootHost(projectRoot, readSource, { sourceIndex: options.sourceIndex }) : null;
+  const projectAliases = await discoverProjectAliases(projectRoot, readSource, { sourceIndex: options.sourceIndex });
+  const vue2SourceRegistrations = vueVersion?.startsWith('2.')
+    ? discoverVue2SourceRegistrations(options.sourceIndex ?? await buildFrontendSourceIndex(projectRoot), vueVersion) : null;
+  const vue3SourceGlobals = vueVersion?.startsWith('3.')
+    ? discoverVue3SourceGlobals(options.sourceIndex ?? await buildFrontendSourceIndex(projectRoot), vueVersion) : null;
   if ("@tarojs/taro" in dependencies && "@tarojs/components" in dependencies) plugins.push("taro-h5");
   const runtimeEvidence = runtimeSources.filter((item) =>
     /\b(?:BrowserRouter|RouterProvider|createBrowserRouter|useRoutes|createPinia|createRouter|configureStore|createStore|createI18n|I18nextProvider|initReactI18next)\b|react-redux/.test(item.source),
@@ -1463,6 +1568,14 @@ export async function discoverPreviewRuntimeContext(projectRoot, options = {}) {
   const dependencyFingerprint = fullFingerprint({
     packageJson: packageJsonText,
     vueVersion,
+    webpackSvgSprites,
+    uniPlatformDefine,
+    uniPages,
+    uniCloud,
+    uniKuRoot,
+    projectAliases,
+    vue2SourceRegistrations,
+    vue3SourceGlobals,
     lockfiles: await Promise.all(lockfileText),
     globalStyles: await Promise.all(globalStyles.map(async (filePath) => ({
       filePath,
@@ -1476,6 +1589,14 @@ export async function discoverPreviewRuntimeContext(projectRoot, options = {}) {
   });
   return {
     vueVersion,
+    webpackSvgSprites,
+    uniPlatformDefine,
+    uniPages,
+    uniCloud,
+    uniKuRoot,
+    projectAliases,
+    vue2SourceRegistrations,
+    vue3SourceGlobals,
     providers,
     globalStyles,
     plugins,
@@ -1524,6 +1645,7 @@ export async function writeComponentPreviewRuntime(projectRoot, registry, option
     runtimeContext,
   });
   await mkdir(previewRoot, { recursive: true });
+  await writeUniStaticResources(resolvedRoot, previewRoot, [...new Map(selectedPreviews.flatMap(preview=>preview.staticResources ?? []).map(item=>[item.filePath,item])).values()]);
   await Promise.all(
     Object.entries(files).map(async ([filePath, content]) => {
       const outputPath = join(previewRoot, filePath);
@@ -1546,7 +1668,7 @@ export async function prepareComponentPreviewRuntime(projectRoot, options = {}) 
     await readFile(join(assetDir, "component-previews.json"), "utf8"),
   );
   if (!registry.runtimeContext) {
-    throw new Error("Component preview runtime context is missing. Run vibe-foundry distill again.");
+    throw new Error("Component preview runtime context is missing. Run vibe distill again.");
   }
   const runtimeContext = registry.runtimeContext;
   const selectedPreview = resolveComponentPreview(registry, options.component)
@@ -1619,7 +1741,7 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
     throw new Error(`Component preview is blocked: ${preview.blockers.join(" ")}`);
   }
   if (!preview.actionDigest) {
-    throw new Error("Component preview action digest is missing. Run vibe-foundry distill again.");
+    throw new Error("Component preview action digest is missing. Run vibe distill again.");
   }
 
   const previewUrl = componentPreviewVersionUrl(preview.id, preview.actionDigest);
@@ -1631,6 +1753,7 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
   const transientRetryBaseMs = options.transientRetryBaseMs ?? 1_000;
   const maxTransientAttempts = options.maxTransientAttempts ?? 3;
   let leaseOwned = false;
+  let heartbeat;
   let previewRoot = "";
   try {
     const deadline = Date.now() + leaseWaitMs;
@@ -1671,7 +1794,16 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
       }
     }
 
-    const prepared = await prepareComponentPreviewRuntime(resolvedRoot, {
+    heartbeat = setInterval(() => {
+      cache.renew(preview.actionDigest, owner, {
+        now: Date.now(),
+        ttlMs: leaseTtlMs,
+      });
+    }, Math.max(1, Math.floor(leaseTtlMs / 3)));
+
+    const prepared = preview.runtime === "static-website"
+      ? { previewRoot: join(assetDir, "preview-runtime-static", `${preview.id}-${owner}`) }
+      : await prepareComponentPreviewRuntime(resolvedRoot, {
       assetDir,
       component: preview.id,
       previewRootFor: (selectedPreview) => join(
@@ -1686,32 +1818,24 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
     const processSpec = options.buildProcessSpec ?? createPreviewBuildProcessSpec(buildOutDir);
     const buildEnvironment = createSafeProcessEnvironment(options.hostEnvironment, {
       BROWSER: "none",
-      VIBE_FOUNDRY_PREVIEW_BASE: previewUrl,
+      VIBEHUB_PREVIEW_BASE: previewUrl,
     });
-    const heartbeat = setInterval(() => {
-      cache.renew(preview.actionDigest, owner, {
-        now: Date.now(),
-        ttlMs: leaseTtlMs,
+    if (preview.runtime === "static-website") {
+      await writeWebsitePreviewBundle(resolvedRoot, preview, outputDir);
+    } else if (options.executeBuild) {
+      await options.executeBuild({
+        outputDir,
+        previewRoot: prepared.previewRoot,
+        preview,
+        processSpec,
+        env: buildEnvironment,
       });
-    }, Math.max(1_000, Math.floor(leaseTtlMs / 3)));
-    try {
-      if (options.executeBuild) {
-        await options.executeBuild({
-          outputDir,
-          previewRoot: prepared.previewRoot,
-          preview,
-          processSpec,
-          env: buildEnvironment,
-        });
-      } else {
-        if (!options.buildProcessSpec) assertPreviewDependencies(resolvedRoot, preview.runtime);
-        await runPreviewBuild(processSpec, {
-          cwd: prepared.previewRoot,
-          env: buildEnvironment,
-        });
-      }
-    } finally {
-      clearInterval(heartbeat);
+    } else {
+      if (!options.buildProcessSpec) assertPreviewDependencies(resolvedRoot, preview.runtime);
+      await runPreviewBuild(processSpec, {
+        cwd: prepared.previewRoot,
+        env: buildEnvironment,
+      });
     }
     await writeFile(join(outputDir, "preview-manifest.json"), stableJson({
       componentId: preview.id,
@@ -1721,7 +1845,6 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
       actionDigest: preview.actionDigest,
       leaseOwner: owner,
       outputDir,
-      completedAt: Date.now(),
     });
     if (!committed.committed) {
       throw new Error(`Component preview lease was lost before commit: ${preview.actionDigest}`);
@@ -1741,14 +1864,15 @@ export async function buildComponentPreviewStaticBundle(projectRoot, options = {
         leaseOwner: owner,
         failureClass: transientCodes.has(error?.code) ? "transient" : "deterministic",
         failureCode: error?.code ?? "BUILD_ERROR",
-        completedAt: Date.now(),
       });
     }
     throw error;
   } finally {
-    if (previewRoot) {
-      await rm(previewRoot, { recursive: true, force: true });
+    clearInterval(heartbeat);
+    try {
+      if (previewRoot) await rm(previewRoot, { recursive: true, force: true });
+    } finally {
+      cache.close();
     }
-    cache.close();
   }
 }

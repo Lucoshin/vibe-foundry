@@ -9,7 +9,7 @@ import { extractTokens } from "../../dist/analyzers/token-extractor.js";
 const fixtureRoots = [];
 
 async function createTokenFixture() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-tokens-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-tokens-"));
   fixtureRoots.push(root);
   await mkdir(join(root, "src", "components"), { recursive: true });
   await writeFile(

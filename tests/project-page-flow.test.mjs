@@ -1,0 +1,93 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { distillProject } from '../dist/index.js';
+import { loadAssetViewModel, queryAssets } from '../dist/application/asset-catalog.js';
+import { readComponentPrompt } from '../dist/library/component-prompts.js';
+
+test('registered pages retain their identity and enter source-based preview and prompt pipelines', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'vibe-page-flow-'));
+  try {
+    const project = join(root, 'project');
+    await mkdir(join(project, 'src/pages/publish'), { recursive: true });
+    await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'page-fixture', dependencies: { '@dcloudio/uni-app': '1' } }));
+    await writeFile(join(project, 'src/pages.json'), JSON.stringify({ pages: [{ path: 'pages/publish/index', style: { navigationBarTitleText: '岗位发布' } }] }));
+    await writeFile(join(project, 'src/pages/publish/index.vue'), '<template><view v-if="expanded">发布岗位</view></template><script setup>const expanded = true;</script>');
+    const options = { assetLibraryRoot: join(root, 'library') };
+    const result = await distillProject(project, options);
+    const catalog = JSON.parse(await readFile(join(result.outputDir, 'component-catalog.json'), 'utf8'));
+    assert.equal(catalog.pages.length, 1);
+    assert.equal(catalog.recipe.includePages, true);
+    assert.equal(catalog.components.length, 0);
+    assert.equal(catalog.pages[0].kind, 'page');
+    assert.equal(catalog.pages[0].exportMode, 'default');
+    assert.equal(catalog.pages[0].platformRuntime, 'uni-h5');
+    assert.equal(catalog.pages[0].previewScenario, undefined);
+    const registry = JSON.parse(await readFile(join(result.outputDir, 'component-previews.json'), 'utf8'));
+    assert.equal(registry.previews.length, 1);
+    assert.equal(registry.previews[0].componentPath, 'src/pages/publish/index.vue');
+    const prompt = await readComponentPrompt(result.outputDir, 'src/pages/publish/index.vue');
+    assert.equal(prompt.componentName, '岗位发布');
+    assert.ok(prompt.sourceFiles.includes('src/pages/publish/index.vue'));
+    assert.ok(prompt.prompt.length > 0);
+    const view = await loadAssetViewModel(project, { ...options, runtimePreviewState: false });
+    const pages = queryAssets(view.assets, { kind: 'page', query: 'pages/publish/index' });
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].name, '岗位发布');
+    assert.ok(pages[0].componentPreview);
+    assert.equal(pages[0].raw.states[0].expression, 'expanded');
+    await writeFile(join(project, 'src/pages.json'), JSON.stringify({ pages: [{ path: 'pages/publish/index', style: { navigationBarTitleText: '发布工作' } }] }));
+    await distillProject(project, options);
+    const renamedView = await loadAssetViewModel(project, { ...options, runtimePreviewState: false });
+    assert.equal(queryAssets(renamedView.assets, { kind: 'page' })[0].id, pages[0].id);
+    await distillProject(project, { ...options, recipeVersion: 1 });
+    const oldView = await loadAssetViewModel(project, { ...options, runtimePreviewState: false });
+    assert.equal(queryAssets(oldView.assets, { kind: 'page' }).length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('legacy v3 admin pages take precedence and preserve its unmatched-view rule', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'vibe-admin-page-flow-'));
+  t.after(() => rm(root, {recursive:true,force:true}));
+  const project = join(root,'project');
+  for (const directory of ['src/views','src/router','src/layout']) await mkdir(join(project,directory),{recursive:true});
+  await writeFile(join(project,'package.json'),JSON.stringify({name:'admin-fixture',dependencies:{vue:'2.6.14','vue-router':'3.5.4'}}));
+  await writeFile(join(project,'src/router/index.js'), "import Router from 'vue-router'; export const constantRoutes=[{path:'/home',component:()=>import('@/views/Home')}]; export default new Router({routes:constantRoutes});");
+  await writeFile(join(project,'src/views/Home.vue'), '<template><div>首页</div></template>');
+  await writeFile(join(project,'src/views/Pending.vue'), '<template><button>后台视图</button></template>');
+  await writeFile(join(project,'src/layout/index.vue'), '<template><main>布局</main></template>');
+  await writeFile(join(project,'src/layout/ResizeHandler.js'), 'export default { mounted() {} };');
+  const result = await distillProject(project,{assetLibraryRoot:join(root,'library'),recipeVersion:3});
+  const catalog = JSON.parse(await readFile(join(result.outputDir,'component-catalog.json'),'utf8'));
+  assert.deepEqual(catalog.pages.map(page=>page.filePath),['src/views/Home.vue']);
+  assert.deepEqual(catalog.components.map(component=>component.filePath),['src/layout/index.vue','src/views/Pending.vue']);
+  assert.match(catalog.components[1].limitations.join(' '),/未识别到静态页面路由/);
+  const registry = JSON.parse(await readFile(join(result.outputDir,'component-previews.json'),'utf8'));
+  assert.equal(registry.previews.length,3);
+  const legacy = await distillProject(project,{assetLibraryRoot:join(root,'library'),recipeVersion:1});
+  const legacyCatalog=JSON.parse(await readFile(join(legacy.outputDir,'component-catalog.json'),'utf8'));
+  assert.equal(legacyCatalog.pages.length,0);
+  assert.deepEqual(legacyCatalog.components.map(component=>component.filePath),['src/layout/index.vue','src/views/Pending.vue']);
+});
+
+test('unregistered uni-app views retain the v3 candidate boundary and follow the v4 component rule', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'vibe-unregistered-page-'));
+  t.after(() => rm(root,{recursive:true,force:true}));
+  const project=join(root,'project');
+  await mkdir(join(project,'src/pagesMember'),{recursive:true});
+  await writeFile(join(project,'package.json'),JSON.stringify({name:'uni-unregistered',dependencies:{'@dcloudio/uni-app':'1'}}));
+  await writeFile(join(project,'src/pages.json'),' {"pages":[]}');
+  await writeFile(join(project,'src/pagesMember/Preview.vue'),'<template><view>会员预览</view></template>');
+  const result=await distillProject(project,{assetLibraryRoot:join(root,'library'),recipeVersion:3});
+  const catalog=JSON.parse(await readFile(join(result.outputDir,'component-catalog.json'),'utf8'));
+  assert.equal(catalog.pages.length,0);
+  assert.equal(catalog.components.length,1);
+  assert.equal(catalog.components[0].filePath,'src/pagesMember/Preview.vue');
+  assert.match(catalog.components[0].limitations.join(' '),/未注册/);
+  const latest=await distillProject(project,{assetLibraryRoot:join(root,'library')});
+  const latestCatalog=JSON.parse(await readFile(join(latest.outputDir,'component-catalog.json'),'utf8'));
+  assert.equal(latestCatalog.components.length,0);
+  assert.equal(latestCatalog.selectionDecisions[0].rule,'viewEntries');
+});

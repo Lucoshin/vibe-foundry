@@ -55,22 +55,22 @@ describe("createSafeProcessEnvironment", () => {
     });
   });
 
-  it("applies only controlled VibeFoundry overrides without mutating the inputs", () => {
+  it("applies only controlled VibeHub overrides without mutating the inputs", () => {
     const hostEnvironment = { PATH: "/usr/bin", BROWSER: "default" };
     const overrides = {
       BROWSER: "none",
-      VIBE_FOUNDRY_PREVIEW_BASE: "/component-preview/button/",
+      VIBEHUB_PREVIEW_BASE: "/component-preview/button/",
     };
 
     assert.deepEqual(createSafeProcessEnvironment(hostEnvironment, overrides), {
       PATH: "/usr/bin",
       BROWSER: "none",
-      VIBE_FOUNDRY_PREVIEW_BASE: "/component-preview/button/",
+      VIBEHUB_PREVIEW_BASE: "/component-preview/button/",
     });
     assert.deepEqual(hostEnvironment, { PATH: "/usr/bin", BROWSER: "default" });
     assert.deepEqual(overrides, {
       BROWSER: "none",
-      VIBE_FOUNDRY_PREVIEW_BASE: "/component-preview/button/",
+      VIBEHUB_PREVIEW_BASE: "/component-preview/button/",
     });
   });
 

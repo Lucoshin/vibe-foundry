@@ -16,7 +16,7 @@ describe("create metaphor pack runbook", () => {
     assert.match(runbook, /node dist\/cli\.js distill \./);
     assert.match(runbook, /集中资产包目录/);
     assert.match(runbook, /<asset-package-dir>\/metaphor-packs/);
-    assert.doesNotMatch(runbook, /\.vibe-foundry\/metaphor-packs/);
+    assert.doesNotMatch(runbook, /\.vibehub\/metaphor-packs/);
     assert.match(runbook, /npm test/);
   });
 });

@@ -1,6 +1,6 @@
 node_modules/
 dist/
-.vibe-foundry/
+.vibehub/
 coverage/
 test-results/
 playwright-report/
@@ -25,11 +25,21 @@ playwright-report/
 vibe-preview-*.png
 /uni-h5-*.png
 
-output/*
-!output/pencil-web-design/
-output/pencil-web-design/*
-!output/pencil-web-design/AJTN7.png
-!output/playwright/
-output/playwright/*
-!output/playwright/web-asset-browser-desktop.png
-!output/playwright/web-asset-browser-mobile.png
+output/
+
+# Historical generated assets retained locally after the VibeHub rename.
+.vibe-foundry/
+
+# Local development records and tool state; public usage docs remain tracked.
+/docs/*
+!/docs/runbooks/
+!/docs/USAGE.md
+/AGENTS.md
+/CLAUDE.md
+/KILO.md
+/.claude/
+/.kilo/
+/.codex/
+/*.pen
+/.agents/skills/*
+!/.agents/skills/vibehub/

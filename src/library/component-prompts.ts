@@ -62,15 +62,18 @@ export async function writeComponentPrompts(assetDir, records) {
     files.set(filename, `${JSON.stringify(record, null, 2)}\n`);
   }
   const directory = await promptDirectory(assetDir, true);
-  for (const [filename, content] of files) {
-    const path = join(directory, filename);
-    let previous;
-    try {
-      previous = await readRegularFile(path);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    if (previous !== content) await writeFile(path, content);
+  const entries = [...files];
+  for (let offset = 0; offset < entries.length; offset += 8) {
+    await Promise.all(entries.slice(offset, offset + 8).map(async ([filename, content]) => {
+      const path = join(directory, filename);
+      let previous;
+      try {
+        previous = await readRegularFile(path);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      if (previous !== content) await writeFile(path, content);
+    }));
   }
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (entry.isFile() && entry.name.endsWith(".json") && !files.has(entry.name)) {

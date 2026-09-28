@@ -1,5 +1,5 @@
 {
-  "name": "@vibe-foundry/vue2-preview-toolchain",
+  "name": "@vibehub/vue2-preview-toolchain",
   "version": "0.1.0",
   "private": true,
   "type": "module",

@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { runInNewContext } from 'node:vm';
+import { randomUUID } from 'node:crypto';
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -25,8 +27,8 @@ async function writeJson(path, value) {
 }
 
 async function createActionBuildFixture() {
-  const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-source-"));
-  const assetDir = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-assets-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-source-"));
+  const assetDir = await mkdtemp(join(tmpdir(), "vibehub-preview-assets-"));
   await mkdir(join(projectRoot, "src", "components"), { recursive: true });
   await writeFile(
     join(projectRoot, "src", "components", "BasicButton.jsx"),
@@ -202,9 +204,12 @@ describe("component preview runtime", () => {
 
     assert.equal(registry.previews[0].platformRuntime, "uni-h5");
     assert.match(files["src/App.js"], /from "@dcloudio\/uni-h5"/);
+    assert.match(files["src/App.js"], /import \{ uniCloudReady \} from "\.\/uni-preview-host\.js"/);
+    assert.match(files["src/uni-preview-host.js"], /import \{ uni, getCurrentPages, getApp, UniServiceJSBridge, UniViewJSBridge \}/);
+    assert.doesNotMatch(files["src/App.js"], /installUniPreviewMock|data:image\/png;base64/);
     assert.match(files["src/App.js"], /previewApp\.component\("picker-view", PickerView\)/);
     assert.match(files["src/App.js"], /@dcloudio\/uni-components\/style\/picker-view\.css/);
-    assert.match(files["vite.config.js"], /vibe-foundry-uni-rpx/);
+    assert.match(files["vite.config.js"], /vibehub-uni-rpx/);
     assert.match(files["vite.config.js"], /generateBundle\(_options, bundle\)/);
     assert.match(files["vite.config.js"], /rpxCalcMaxDeviceWidth/);
     assert.match(files["vite.config.js"], /@dcloudio\/uni-h5-vue/);
@@ -302,16 +307,16 @@ describe("component preview runtime", () => {
     assert.match(files["vite.config.js"], /pathToFileURL/);
     assert.match(files["vite.config.js"], /requireFromPreviewToolchain/);
     assert.doesNotMatch(files["vite.config.js"], /process\.argv\[1\]/);
-    assert.match(files["vite.config.js"], /VIBE_FOUNDRY_PREVIEW_BASE/);
+    assert.match(files["vite.config.js"], /VIBEHUB_PREVIEW_BASE/);
     assert.match(files["vite.config.js"], /resolve:\s*\{/);
     assert.ok(files["vite.config.js"].includes('{ find: /^@\\//, replacement: resolve(projectRoot, "src") + "/" }'));
     assert.match(files["vite.config.js"], /replacement: resolve\(projectRoot, "src"\) \+ "\/"/);
     assert.match(files["vite.config.js"], /vibe-preview-project-dependencies/);
     assert.match(files["vite.config.js"], /dist\/node\/index\.js/);
     assert.doesNotMatch(files["vite.config.js"], /from "vite"/);
-    assert.match(files["vite.config.js"], /name: "vibe-foundry-jsx-in-js-loader"/);
+    assert.match(files["vite.config.js"], /name: "vibehub-jsx-in-js-loader"/);
     assert.match(files["vite.config.js"], /loader: "jsx"/);
-    assert.match(files["vite.config.js"], /name: "vibe-foundry-ts-source-loader"/);
+    assert.match(files["vite.config.js"], /name: "vibehub-ts-source-loader"/);
     assert.match(files["vite.config.js"], /projectTsSourcePattern/);
     assert.match(files["vite.config.js"], /loader: "ts"/);
     assert.match(files["vite.config.js"], /server:\s*\{\s*fs:\s*\{\s*allow:/s);
@@ -476,7 +481,7 @@ describe("component preview runtime", () => {
   });
 
   it("discovers deterministic providers and unresolved runtime context", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-context-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-preview-context-"));
     try {
       await mkdir(join(root, "src"), { recursive: true });
       await writeJson(join(root, "package.json"), {
@@ -514,7 +519,7 @@ describe("component preview runtime", () => {
   });
 
   it("discovers preprocessor styles from TypeScript app entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-styles-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-preview-styles-"));
     try {
       await mkdir(join(root, "src"), { recursive: true });
       await writeJson(join(root, "package.json"), { devDependencies: { unocss: "latest" } });
@@ -530,7 +535,7 @@ describe("component preview runtime", () => {
   });
 
   it("uses the shared source snapshot for runtime providers and entry styles", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-runtime-snapshot-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-runtime-snapshot-"));
     try {
       await mkdir(join(root, "src"));
       await writeJson(join(root, "package.json"), { dependencies: { "react-router-dom": "6.0.0", antd: "5.0.0" } });
@@ -545,7 +550,7 @@ describe("component preview runtime", () => {
   });
 
   it("does not inject antd styles without an authored import and includes Next layout styles", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-runtime-layout-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-runtime-layout-"));
     try {
       await mkdir(join(root, "app"));
       await writeJson(join(root, "package.json"), { dependencies: { antd: "5.0.0", next: "15.0.0" } });
@@ -564,7 +569,7 @@ describe("component preview runtime", () => {
   });
 
   it("discovers styles imported by the real component usage source", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-usage-styles-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-preview-usage-styles-"));
     try {
       await mkdir(join(root, "src", "components"), { recursive: true });
       await mkdir(join(root, "src", "pages"), { recursive: true });
@@ -658,38 +663,51 @@ describe("component preview runtime", () => {
     assert.match(files["index.html"], /src\/App\.js/);
     assert.match(files["vite.config.js"], /@vitejs\/plugin-vue/);
     assert.match(files["vite.config.js"], /vue\(\)/);
-    assert.match(files["vite.config.js"], /vibe-foundry-uni-conditional-loader/);
+    assert.match(files["vite.config.js"], /vibehub-uni-conditional-loader/);
     assert.match(files["vite.config.js"], /stripUniConditionals/);
     assert.match(files["vite.config.js"], /injectVueAutoImports/);
     assert.match(files["vite.config.js"], /vueAutoImportNames = \["computed", "ref"\]/);
     assert.ok(files["vite.config.js"].includes('new RegExp("\\\\b" + name + "\\\\s*\\\\(");'));
     assert.ok(files["vite.config.js"].includes('code.replace(/<script\\s+setup'));
     assert.match(files["vite.config.js"], /APP-PLUS/);
-    assert.match(files["vite.config.js"], /vibe-foundry-vue-ts-script-loader/);
+    assert.match(files["vite.config.js"], /vibehub-vue-ts-script-loader/);
     assert.match(files["vite.config.js"], /lang\.ts/);
     assert.match(files["vite.config.js"], /loader: "ts"/);
     assert.match(files["src/App.js"], /createApp/);
-    assert.match(files["src/App.js"], /installUniPreviewMock/);
+    assert.doesNotMatch(files["src/App.js"], /installUniPreviewMock/);
     assert.match(files["src/App.js"], /fitPreview/);
     assert.match(files["src/App.js"], /errorCaptured/);
     assert.match(files["src/App.js"], /ResizeObserver/);
     assert.match(files["src/App.js"], /--vibe-preview-available-width/);
-    assert.match(files["src/App.js"], /createCanvasContext/);
-    assert.match(files["src/App.js"], /getSystemInfoSync/);
+    assert.doesNotMatch(files["src/App.js"], /createPreviewCanvasContext|previewSystemInfo/);
     assert.match(files["src/App.js"], /markRaw/);
     assert.match(files["src/App.js"], /previewModules/);
     assert.match(files["src/App.js"], /\(\) => import\("\.\/previews\//);
     assert.match(files["src/App.js"], /import "\.\.\/\.\.\/\.\.\/src\/index\.css"/);
     assert.match(files[`src/previews/${preview.id}.vue`], /<template>/);
-    assert.match(files[`src/previews/${preview.id}.vue`], /<Component v-bind="props" \/>/);
+    assert.match(files[`src/previews/${preview.id}.vue`], /<Component v-bind="props" v-on="listeners" \/>/);
     assert.match(files[`src/previews/${preview.id}.vue`], /import Component from "\.\.\/\.\.\/\.\.\/\.\.\/src\/components\/UserPanel\.vue"/);
     assert.equal(files[`src/previews/${preview.id}.jsx`], undefined);
+  });
+
+  it("wraps only uni-app pages in the official page context", () => {
+    const registry = buildComponentPreviewRegistry([{name:'Publish',filePath:'src/pages/publish/index.vue',kind:'page',route:'/pages/publish/index',exportMode:'default',exportName:'default',platformRuntime:'uni-h5'}], {projectRoot:join(tmpdir(),'page-wrapper-fixture'),runtimeContext:{uniPages:{pages:[{path:'pages/publish/index',style:{navigationBar:{}}}],globalStyle:{navigationBar:{}},nvue:{'flex-direction':'column'}}}});
+    const preview = registry.previews[0];
+    const source = buildPreviewRuntimeFiles(registry)[`src/previews/${preview.id}.vue`];
+    assert.match(source, /import \{ setupPage, PageComponent \} from "@dcloudio\/uni-h5"/);
+    assert.match(source, /const PreviewComponent = wrapUniPreviewPage\(setupPage, Component\)/);
+    assert.match(source, /<PageComponent><template #page>/);
+    assert.match(source, /components: \{ Component: PreviewComponent, PageComponent \}/);
+    assert.match(source, /previewModelListeners\(Component, props/);
+    delete preview.platformRuntime;
+    const plain = buildPreviewRuntimeFiles(registry)[`src/previews/${preview.id}.vue`];
+    assert.doesNotMatch(plain, /setupPage|PageComponent/);
   });
 
   it("sends the compiled action digest in React and Vue mount reports", () => {
     for (const extension of ["tsx", "vue"]) {
       const registry = buildComponentPreviewRegistry([{
-        name: "Button", filePath: `src/Button.${extension}`, exportMode: "default",
+        name: "Button", filePath: `src/Button.${extension}`, exportMode: "default", previewScenario: { props: {}, events: [] },
       }], { projectRoot: join(tmpdir(), "preview-runtime-fixture") });
       const files = buildPreviewRuntimeFiles(registry);
       const source = files[extension === "vue" ? "src/App.js" : "src/App.jsx"];
@@ -697,10 +715,13 @@ describe("component preview runtime", () => {
       const reporterSource = source.slice(start, source.indexOf("\n}\n", start) + 2);
       const frames = [];
       const requests = [];
-      const report = new Function("window", "document", "fetch", `${reporterSource}; return reportPreviewMounted;`)(
+      const report = new Function("window", "document", "fetch", "MutationObserver", "hasVisiblePreviewContent", "previews", `let previewContentObserver = null; ${reporterSource}; return reportPreviewMounted;`)(
         { requestAnimationFrame: (callback) => frames.push(callback) },
-        { querySelector: () => ({ querySelector: () => null }) },
+        { querySelector: () => ({ querySelector: () => null, addEventListener() {}, removeEventListener() {} }) },
         (url) => { requests.push(url); return Promise.resolve(); },
+        class { observe() {} disconnect() {} },
+        () => true,
+        registry.previews,
       );
       const preview = registry.previews[0];
       report(preview.id, preview.actionDigest);
@@ -711,7 +732,7 @@ describe("component preview runtime", () => {
   });
 
   it("generates syntactically valid Vue Vite config", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-config-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-config-"));
     try {
       const registry = buildComponentPreviewRegistry(
         [
@@ -801,7 +822,7 @@ describe("component preview runtime", () => {
       .join("\n");
 
     assert.match(sourceText, /const props = \{\};/);
-    assert.doesNotMatch(sourceText, /上传现场照片|沟通|签名确认|操作成功|VibeFoundry 生成的确认弹窗预览/);
+    assert.doesNotMatch(sourceText, /上传现场照片|沟通|签名确认|操作成功|VibeHub 生成的确认弹窗预览/);
   });
   it("can generate a single selected Vue preview without importing every ready SFC", () => {
     const registry = buildComponentPreviewRegistry(
@@ -846,8 +867,8 @@ describe("component preview runtime", () => {
   });
 
   it("can write a selected static preview runtime into an isolated root", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-library-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-library-"));
     try {
       const registry = buildComponentPreviewRegistry(
         [
@@ -907,10 +928,10 @@ describe("component preview runtime", () => {
   });
 
   it("defaults every preview API to the centralized package without using source-local assets", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-source-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-library-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-source-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-library-"));
     const assetDir = assetPackageDirectoryFor(libraryRoot, projectRoot);
-    const sourceLocalDir = join(projectRoot, ".vibe-foundry");
+    const sourceLocalDir = join(projectRoot, ".vibehub");
     try {
       await mkdir(join(projectRoot, "src", "components"), { recursive: true });
       await mkdir(assetDir, { recursive: true });
@@ -978,8 +999,8 @@ describe("component preview runtime", () => {
   });
 
   it("can prepare preview runtime from a centralized asset package directory", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-source-"));
-    const assetDir = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-assets-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-source-"));
+    const assetDir = await mkdtemp(join(tmpdir(), "vibehub-preview-assets-"));
     try {
       await mkdir(join(projectRoot, "src", "components"), { recursive: true });
       await writeFile(
@@ -1047,8 +1068,8 @@ describe("component preview runtime", () => {
   });
 
   it("commits one static build to the persistent action cache and reuses it", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-source-"));
-    const assetDir = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-assets-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-source-"));
+    const assetDir = await mkdtemp(join(tmpdir(), "vibehub-preview-assets-"));
     try {
       await mkdir(join(projectRoot, "src", "components"), { recursive: true });
       await writeFile(
@@ -1139,7 +1160,7 @@ describe("component preview runtime", () => {
         SYSTEMROOT: "C:\\Windows",
         TEMP: "C:\\Temp",
         BROWSER: "none",
-        VIBE_FOUNDRY_PREVIEW_BASE: `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`,
+        VIBEHUB_PREVIEW_BASE: `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`,
       });
     } finally {
       await rm(fixture.projectRoot, { recursive: true, force: true });
@@ -1179,7 +1200,7 @@ describe("component preview runtime", () => {
         assert.equal(observed.env[name], undefined);
       }
       assert.equal(observed.env.BROWSER, "none");
-      assert.equal(observed.env.VIBE_FOUNDRY_PREVIEW_BASE, `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`);
+      assert.equal(observed.env.VIBEHUB_PREVIEW_BASE, `${fixture.registry.previews[0].browserUrl}${fixture.registry.previews[0].actionDigest}/`);
       assert.equal(observed.env.PATH, testPath);
       assert.ok(observed.args.includes("--outDir"));
 
@@ -1189,7 +1210,7 @@ describe("component preview runtime", () => {
         for (const value of Object.values(forbiddenEnvironment)) {
           assert.equal(artifact.includes(value), false);
         }
-        assert.match(artifact, /VIBE_FOUNDRY_PREVIEW_BASE/);
+        assert.match(artifact, /VIBEHUB_PREVIEW_BASE/);
         const manifest = JSON.parse((await cache.readFile(result.actionDigest, "preview-manifest.json")).toString("utf8"));
         assert.deepEqual(manifest, { componentId: fixture.registry.previews[0].id, actionDigest: result.actionDigest });
       } finally {
@@ -1259,6 +1280,52 @@ describe("component preview runtime", () => {
     } finally {
       await rm(fixture.projectRoot, { recursive: true, force: true });
       await rm(fixture.assetDir, { recursive: true, force: true });
+    }
+  });
+
+  it("renews the lease across slow preparation and publication, including failure publication", async () => {
+    const runtimeSource = await readFile(new URL('../../src/preview/component-preview-runtime.ts', import.meta.url), 'utf8');
+    const buildFunction = runtimeSource.slice(runtimeSource.indexOf('export async function buildComponentPreviewStaticBundle(')).replace(/^export /, '');
+    for (const failing of [false, true]) {
+      const fixture = await createActionBuildFixture();
+      const competitor = openPreviewBuildCache(fixture.assetDir);
+      const actionDigest = fixture.registry.previews[0].actionDigest;
+      const observations = [];
+      const delay = () => new Promise(resolve => setTimeout(resolve, 350));
+      const checkOwnership = () => observations.push(competitor.claim(actionDigest, 'competitor', {now:Date.now(),ttlMs:180}));
+      const build = runInNewContext('(' + buildFunction + ')', {
+        resolve,join,relative,readFile,writeFile,rm,randomUUID,setTimeout,setInterval,clearInterval,
+        resolveComponentPreview,
+        componentPreviewVersionUrl: (id,digest) => '/component-preview/'+id+'/'+digest+'/',
+        stableJson: JSON.stringify,
+        createSafeProcessEnvironment: () => ({}),
+        openPreviewBuildCache: dir => {
+          const cache = openPreviewBuildCache(dir);
+          return {...cache,
+            async commitSuccess(result) {await delay();checkOwnership();return cache.commitSuccess({...result,completedAt:Date.now()});},
+            async commitFailure(result) {await delay();checkOwnership();return cache.commitFailure({...result,completedAt:Date.now()});},
+          };
+        },
+        async prepareComponentPreviewRuntime() {
+          await delay();checkOwnership();
+          return {previewRoot:join(fixture.assetDir,'slow-runtime')};
+        },
+      });
+      try {
+        const promise = build(fixture.projectRoot, {assetDir:fixture.assetDir,component:fixture.registry.previews[0].id,leaseTtlMs:180,buildProcessSpec:{},
+          async executeBuild({outputDir}) {
+            if(failing) throw new Error('authored build failure');
+            await mkdir(outputDir,{recursive:true});await writeFile(join(outputDir,'index.html'),'real test artifact');
+          },
+        });
+        if(failing)await assert.rejects(promise,/authored build failure/);else await promise;
+        assert.deepEqual(observations,[false,false], 'another owner cannot steal the lease during either slow stage');
+        assert.equal(competitor.getAction(actionDigest).state,failing?'failed_deterministic':'succeeded');
+      } finally {
+        competitor.close();
+        await rm(fixture.projectRoot,{recursive:true,force:true});
+        await rm(fixture.assetDir,{recursive:true,force:true});
+      }
     }
   });
 
@@ -1339,8 +1406,8 @@ describe("component preview runtime", () => {
   });
 
   it("preserves source fallback slots without inventing preview content when no usage scenario exists", async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-slots-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-preview-library-"));
+    const projectRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-slots-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-preview-library-"));
     try {
       await mkdir(join(projectRoot, "src", "components", "common"), { recursive: true });
       await writeFile(
@@ -1393,7 +1460,7 @@ const props = defineProps<{ clickable?: boolean }>();
         "utf8",
       );
 
-      assert.match(previewSource, /<Component v-bind="props" \/>/);
+      assert.match(previewSource, /<Component v-bind="props" v-on="listeners" \/>/);
       assert.doesNotMatch(previewSource, /<template #|预览卡片|候选人：王小明|更新时间|vibe-preview-slot/);
       const componentSource = await readFile(join(projectRoot, "src", "components", "common", "AppListCard.vue"), "utf8");
       assert.match(componentSource, /<slot>源组件默认内容<\/slot>/);

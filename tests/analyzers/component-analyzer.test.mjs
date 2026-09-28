@@ -10,7 +10,7 @@ import { buildFrontendSourceIndex } from "../../dist/analyzers/frontend-source-i
 const fixtureRoots = [];
 
 async function createComponentFixture() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-components-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-components-"));
   fixtureRoots.push(root);
   await mkdir(join(root, "src", "components"), { recursive: true });
   await mkdir(join(root, "src", "pages"), { recursive: true });
@@ -62,6 +62,22 @@ async function createComponentFixture() {
 }
 
 describe("analyzeComponents", () => {
+  it('analyzes explicit page files without directory scanning or component filters', async () => {
+    const root = await createComponentFixture();
+    await writeFile(join(root, 'src/pages/IconPage.vue'), '<template><svg><path d="M0 0"/></svg></template>');
+    const sourceIndex = await buildFrontendSourceIndex(root);
+    const assets = await analyzeComponents(root, ['src/components'], ['src'], {
+      sourceIndex,
+      filePaths: ['src/pages/IconPage.vue', 'src/pages/IconPage.vue'],
+      componentRules: { iconPrimitives: 'exclude', emptyShells: 'exclude' },
+    });
+    assert.deepEqual(assets.map(asset => asset.filePath), ['src/pages/IconPage.vue']);
+    assert.equal(assets[0].exportMode, 'default');
+    assert.match(assets[0].dependencyFingerprint, /^[a-f0-9]{64}$/);
+    await assert.rejects(analyzeComponents(root, [], ['src'], { sourceIndex, filePaths: ['src/pages/Missing.vue'] }), /索引/);
+    await assert.rejects(analyzeComponents(root, [], ['src'], { sourceIndex, filePaths: ['../outside.vue'] }), /路径/);
+    assert.deepEqual(await analyzeComponents(root, ['src/components'], ['src'], { sourceIndex, filePaths: [] }), []);
+  });
   afterEach(async () => {
     await Promise.all(
       fixtureRoots.splice(0).map((root) =>

@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function createProject(packageJson, directories) {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-project-scan-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-project-scan-"));
   roots.push(root);
   await writeFile(join(root, "package.json"), JSON.stringify(packageJson));
   await Promise.all(directories.map((directory) => mkdir(join(root, directory), { recursive: true })));
@@ -21,6 +21,12 @@ async function createProject(packageJson, directories) {
 }
 
 describe("scanProject", () => {
+  it('includes admin view candidates and singular layout directory', async () => {
+    const root = await createProject({name:'admin',dependencies:{vue:'2.6.14'}}, ['src/views','src/layout']);
+    const scan = await scanProject(root);
+    assert.deepEqual(scan.componentDirs, ['src/layout','src/views']);
+    assert.ok(scan.pageDirs.includes('src/views'));
+  });
   it("includes feature, layout, provider, and uni-app package roots", async () => {
     const root = await createProject(
       { name: "frontend", dependencies: { react: "latest" } },
@@ -54,4 +60,17 @@ describe("scanProject", () => {
     assert.equal(scan.framework, "uni-app");
     assert.equal(scan.language, "typescript");
   });
+});
+
+it("finds app components and common UI/widget roots", async () => {
+  const directories = ["app/components", "app/layouts", "src/widgets", "src/ui", "ui"];
+  const root = await createProject({ name: "frontend", dependencies: { react: "latest" } }, directories);
+  const scan = await scanProject(root);
+  assert.deepEqual([...scan.componentDirs].sort(), directories.sort());
+  for (const directory of directories) await writeFile(join(root, directory, 'Button.jsx'), 'export default function Button() { return <button>真实组件</button>; }');
+  const { buildFrontendSourceIndex } = await import('../../dist/analyzers/frontend-source-index.js');
+  const { analyzeComponents } = await import('../../dist/analyzers/component-analyzer.js');
+  const sourceIndex = await buildFrontendSourceIndex(root, scan.componentDirs);
+  const components = await analyzeComponents(root, scan.componentDirs, scan.componentDirs, { sourceIndex });
+  assert.deepEqual(components.map(component => component.filePath).sort(), directories.map(directory => directory + '/Button.jsx').sort());
 });

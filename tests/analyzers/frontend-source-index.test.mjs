@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function createProject(files) {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-source-index-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-source-index-"));
   roots.push(root);
   await Promise.all(Object.entries(files).map(async ([filePath, source]) => {
     const outputPath = join(root, filePath);

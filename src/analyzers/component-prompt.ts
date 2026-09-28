@@ -6,7 +6,7 @@ import { parse as parseJavaScript } from "@babel/parser";
 import { NodeTypes, parse as parseVueTemplate } from "@vue/compiler-dom";
 import { parse as parseVueSfc } from "@vue/compiler-sfc";
 
-import { canonicalSerialize } from "../preview/preview-action.js";
+import { canonicalSerialize } from "../utils/canonical-json.js";
 import { buildComponentDesignDescription } from "./component-design-description.js";
 
 const textExtensions = new Set([".js", ".jsx", ".ts", ".tsx", ".vue", ".css", ".scss", ".sass", ".less", ".styl", ".stylus", ".svg", ".json"]);
@@ -158,7 +158,8 @@ function sourceReferences(filePath, sourceText, indexedFile) {
   return { references, dynamic };
 }
 
-export async function buildComponentPrompts(projectRoot, components, { sourceIndex, runtimeContext = {}, tokens = [] }) {
+export async function buildComponentPrompts(projectRoot, components, { sourceIndex, runtimeContext = {}, tokens = [], recipe }) {
+  if (recipe && !recipe.sourceKinds.includes('project')) throw new Error('组件效果描述必须使用工程炼化方案。');
   const resolvedRoot = await realpath(resolve(projectRoot));
   const indexedFiles = new Map(sourceIndex.files.map((file) => [normalizePath(file.filePath), file]));
   const materialCache = new Map();
@@ -204,6 +205,7 @@ export async function buildComponentPrompts(projectRoot, components, { sourceInd
     const included = new Map();
     const attachments = new Map();
     const unresolved = new Set((runtimeContext.unresolved ?? []).map((item) => `未还原运行上下文：${item}`));
+    for (const limitation of component.staticResourceLimitations ?? []) unresolved.add(limitation);
     for (const prop of selected?.unresolvedProps ?? []) unresolved.add(`未解析调用参数：${prop}`);
     for (const slot of selected?.unresolvedSlots ?? []) unresolved.add(`未解析调用插槽：${slot}`);
     if (!selected) unresolved.add("缺少真实调用样例；不生成虚构 props、插槽或业务状态。");
@@ -211,6 +213,8 @@ export async function buildComponentPrompts(projectRoot, components, { sourceInd
     if (selected?.sourceFile) pending.push({ filePath: selected.sourceFile, followModules: false });
     for (const filePath of runtimeContext.globalStyles ?? []) pending.push({ filePath, followModules: true });
     pending.push({ filePath: component.filePath, followModules: true });
+    for (const duplicate of component.duplicateSources ?? []) pending.push({filePath:duplicate.filePath,followModules:true});
+    for (const resource of component.staticResources ?? []) pending.push({filePath:resource.filePath,followModules:false});
     const visited = new Map();
     const omittedScenarioDependencies = [];
     const isStyleOrResource = (filePath) => {
@@ -248,6 +252,7 @@ export async function buildComponentPrompts(projectRoot, components, { sourceInd
         else unresolved.add(`外部依赖或别名未解析：${filePath} → ${dependency.source}`);
       }
       for (const reference of references) {
+        if (reference.source.startsWith('/static/') && component.staticResources?.some(resource=>resource.publicPath===reference.source.split(/[?#]/)[0].slice(1))) continue;
         if (reference.module && !next.followModules && !isStyleOrResource(reference.source)) {
           omittedScenarioDependencies.push({ sourceFile: filePath, source: reference.source, resolvedFilePath: "" });
           continue;
@@ -283,10 +288,15 @@ export async function buildComponentPrompts(projectRoot, components, { sourceInd
       scenario: selected,
     });
     for (const item of description.unresolved) unresolved.add(item);
+    const prompt = recipe
+      ? '炼化方案：' + recipe.name + ' · v' + recipe.version + '\n\n' + recipe.prompt.replace(/\{(source|focus)\}/g, (_, key) => key === 'source' ? description.prompt : recipe.focus.join('\n'))
+        + '\n\n本次复现要求（方案指令，不是已观察事实）：\n' + recipe.outputInstructions
+      : description.prompt;
     const metadata = {
       componentName: component.name, filePath: normalizePath(component.filePath),
       exportMode: component.exportMode, exportName: component.exportName, componentType: component.componentType,
       platformRuntime: component.platformRuntime, platformComponents: component.platformComponents,
+      staticResources: component.staticResources ?? [],
       selectedScenario: selected ?? null,
       previewRuntimeContext: {
         providers: runtimeContext.providers ?? [], plugins: runtimeContext.plugins ?? [],
@@ -300,12 +310,13 @@ export async function buildComponentPrompts(projectRoot, components, { sourceInd
       ...[...attachments.values()].map(({ filePath, sha256, bytes }) => ({ filePath, digest: sha256, bytes })),
     ].sort((left, right) => left.filePath.localeCompare(right.filePath));
     const sourceDigest = digest(canonicalSerialize(JSON.parse(JSON.stringify({
-      contract: "component-effect-prompt-v2",
+      contract: "component-effect-prompt-v3-static-evidence",
       materials: materialDigests,
       metadata,
-      prompt: description.prompt,
+      prompt,
+      ...(recipe ? {recipe: {id:recipe.id,version:recipe.version,digest:recipe.digest}} : {}),
     }))));
-    records.push({ schemaVersion: "0.2.0", componentName: component.name, filePath: normalizePath(component.filePath), sourceDigest, sourceFiles, unresolved: metadata.unresolved, prompt: description.prompt });
+    records.push({ schemaVersion: "0.2.0", componentName: component.name, filePath: normalizePath(component.filePath), sourceDigest, sourceFiles: [...new Set([...sourceFiles, ...(component.staticResources ?? []).map(resource => resource.filePath)])].sort(), unresolved: metadata.unresolved, prompt });
   }
   return records;
 }

@@ -1,16 +1,16 @@
 ---
-project: VibeFoundry
+project: VibeHub
 category: runbook
 source_path: docs/runbooks/quickstart.md
 status: active
 last_updated: 2026-09-08
 ---
 
-# VibeFoundry Quickstart
+# VibeHub Quickstart
 
 目标：10 分钟内完成构建、验证、资产炼化、MCP 查询和插件检查。
 
-资产包统一写入集中资产库：优先使用 `VIBE_FOUNDRY_LIBRARY_ROOT`，未设置时使用 `<user-home>/.vibe-foundry/library`。`distill` 会打印本次生成的准确资产包目录。
+资产包统一写入集中资产库：优先使用 `VIBEHUB_LIBRARY_ROOT`，未设置时使用 `<user-home>/.vibehub/library`。`distill` 会打印本次生成的准确资产包目录。
 
 ## 1. 验证工具状态
 
@@ -46,7 +46,7 @@ node dist/cli.js distill examples/fixture-project
 ## 3. 查询 MCP 资产
 
 ```bash
-node --input-type=module -e "import { callVibeFoundryTool } from './dist/mcp/server.js'; const result = await callVibeFoundryTool('examples/fixture-project', 'search_concept_assets', { query: 'library' }); console.log(JSON.stringify(result.structuredContent, null, 2));"
+node --input-type=module -e "import { callVibeHubTool } from './dist/mcp/server.js'; const result = await callVibeHubTool('examples/fixture-project', 'search_concept_assets', { query: 'library' }); console.log(JSON.stringify(result.structuredContent, null, 2));"
 ```
 
 也可以查询：
@@ -66,7 +66,7 @@ node --input-type=module -e "import { callVibeFoundryTool } from './dist/mcp/ser
 插件目录：
 
 ```text
-plugins/vibe-foundry
+plugins/vibehub
 ```
 
 本地 marketplace：

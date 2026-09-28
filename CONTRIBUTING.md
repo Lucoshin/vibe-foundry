@@ -1,19 +1,19 @@
-# Contributing to VibeFoundry
+# Contributing to VibeHub
 
-感谢你愿意改进 VibeFoundry。这里接受问题修复、测试、文档和经过讨论的功能贡献。
+感谢你愿意改进 VibeHub。这里接受问题修复、测试、文档和经过讨论的功能贡献。
 
 ## 开始之前
 
 - 使用 Node.js `>=22.18.0 <23`，或 `>=24.11.0`，并使用 npm `11.6.2`。
-- 先阅读 [文档索引](docs/README.md) 和与改动相关的计划或 ADR（架构决策记录）。
+- 先阅读 [使用文档](docs/USAGE.md)，在 Issue 或 Pull Request 中说明改动范围、设计取舍与验证结果。
 - 大型功能、公开契约变化或新的资产类型应先创建 Issue 讨论范围。
 - 不要提交环境文件、本地生成的集中资产库、数据库、测试结果、截图、访问凭据或包含个人绝对路径的内容。
 
 ## 本地开发
 
 ```bash
-git clone https://github.com/Lucoshin/vibe-foundry.git
-cd vibe-foundry
+git clone https://github.com/Lucoshin/vibe-foundry.git vibehub
+cd vibehub
 npm ci
 npm test
 ```

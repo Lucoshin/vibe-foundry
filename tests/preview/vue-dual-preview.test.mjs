@@ -8,7 +8,7 @@ import { buildComponentPreviewRegistry, buildPreviewRuntimeFiles, buildComponent
 import { assertPreviewDependencies } from '../../dist/preview/preview-dependencies.js';
 
 const require = createRequire(import.meta.url);
-const vue2Toolchain = createRequire(require.resolve('@vibe-foundry/vue2-preview-toolchain'));
+const vue2Toolchain = createRequire(require.resolve('@vibehub/vue2-preview-toolchain'));
 const context = {providers:[],plugins:[],globalStyles:[],unresolved:[],environmentVariables:[],networkPolicy:'block-external',fingerprint:'vue-test'};
 
 for (const [version, vuePath, compilerPath] of [

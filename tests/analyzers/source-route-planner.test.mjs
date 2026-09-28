@@ -10,7 +10,7 @@ import { buildFrontendSourceIndex } from "../../dist/analyzers/frontend-source-i
 const roots = [];
 
 async function createProject(files) {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-source-routes-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-source-routes-"));
   roots.push(root);
   for (const [filePath, source] of Object.entries(files)) {
     const outputPath = join(root, filePath);

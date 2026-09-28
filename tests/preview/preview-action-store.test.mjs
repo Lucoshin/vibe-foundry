@@ -9,7 +9,7 @@ import { openPreviewActionStore } from "../../dist/preview/preview-action-store.
 const roots = [];
 
 async function createStore() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-action-store-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-action-store-"));
   roots.push(root);
   const databasePath = join(root, "preview-state.db");
   return {

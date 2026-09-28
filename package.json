@@ -1,8 +1,8 @@
 {
-  "name": "vibe-foundry",
+  "name": "vibehub",
   "version": "0.1.0",
   "private": true,
-  "description": "Distill reusable assets from code, business flows, product ideas, and culture materials.",
+  "description": "Distill knowledge and reusable assets from materials and practice; apply them through Web, Skills and MCP.",
   "license": "Apache-2.0",
   "author": "Lucoshin",
   "repository": {
@@ -16,7 +16,7 @@
   "type": "module",
   "packageManager": "npm@11.6.2",
   "bin": {
-    "vibe-foundry": "./dist/cli.js"
+    "vibe": "./dist/cli.js"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@babel/parser": "^8.0.5",
-    "@vibe-foundry/vue2-preview-toolchain": "file:packages/vue2-preview-toolchain",
+    "@vibehub/vue2-preview-toolchain": "file:packages/vue2-preview-toolchain",
     "@vitejs/plugin-vue": "5.2.4",
     "@vue/compiler-dom": "^3.5.42",
     "@vue/compiler-sfc": "^3.5.42",

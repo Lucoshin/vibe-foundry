@@ -13,7 +13,7 @@ import { assetPackageDirectoryFor } from "../../dist/library/asset-library.js";
 
 const fixtureRoots = [];
 const mcpProcesses = new Set();
-const originalLibraryRoot = process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+const originalLibraryRoot = process.env.VIBEHUB_LIBRARY_ROOT;
 
 async function loadServer() {
   return import("../../dist/mcp/server.js");
@@ -43,7 +43,7 @@ function startMcpProcess(projectRoot, libraryRoot) {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        VIBE_FOUNDRY_LIBRARY_ROOT: libraryRoot,
+        VIBEHUB_LIBRARY_ROOT: libraryRoot,
       },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -93,11 +93,11 @@ function startMcpProcess(projectRoot, libraryRoot) {
 }
 
 async function createAssetPackageFixture() {
-  const root = await mkdtemp(join(tmpdir(), "vibe-foundry-mcp-"));
-  const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-mcp-library-"));
+  const root = await mkdtemp(join(tmpdir(), "vibehub-mcp-"));
+  const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-mcp-library-"));
   const assetDir = assetPackageDirectoryFor(libraryRoot, root);
   fixtureRoots.push(root, libraryRoot);
-  process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
+  process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
   await mkdir(assetDir, { recursive: true });
   await mkdir(join(root, "src"), { recursive: true });
   await writeFile(join(root, "src", "source.ts"), "export const source = true;\n");
@@ -195,12 +195,12 @@ async function createAssetPackageFixture() {
   });
   await writeFile(
     join(assetDir, "agent-rules.md"),
-    "# VibeFoundry Agent Rules\n\n- 使用资产前先查 `.vibe-foundry/`。\n",
+    "# VibeHub Agent Rules\n\n- 使用资产前先查 `.vibehub/`。\n",
   );
   return { root, libraryRoot, assetDir };
 }
 
-describe("VibeFoundry MCP readonly server", () => {
+describe("VibeHub MCP readonly server", () => {
   afterEach(async () => {
     await Promise.all(
       [...mcpProcesses].map(async (child) => {
@@ -214,20 +214,31 @@ describe("VibeFoundry MCP readonly server", () => {
       ),
     );
     if (originalLibraryRoot === undefined) {
-      delete process.env.VIBE_FOUNDRY_LIBRARY_ROOT;
+      delete process.env.VIBEHUB_LIBRARY_ROOT;
     } else {
-      process.env.VIBE_FOUNDRY_LIBRARY_ROOT = originalLibraryRoot;
+      process.env.VIBEHUB_LIBRARY_ROOT = originalLibraryRoot;
     }
   });
 
   it("lists the readonly asset tools required by Milestone 6", async () => {
-    const { listVibeFoundryTools } = await loadServer();
+    const { listVibeHubTools } = await loadServer();
 
-    const tools = listVibeFoundryTools();
+    const tools = listVibeHubTools();
 
     assert.deepEqual(
       tools.map((tool) => tool.name),
       [
+        "list_prompts",
+        "get_prompt",
+        "render_prompt",
+        "list_knowledge_collections",
+        "get_knowledge_collection",
+        "explore_asset_relations",
+        "get_learning_memory",
+        "get_creator_task",
+        "create_task_context",
+        "search_library_assets",
+        "get_library_asset",
         "list_assets",
         "get_component",
         "get_component_prompt",
@@ -245,28 +256,28 @@ describe("VibeFoundry MCP readonly server", () => {
 
   it("queries components, services, tokens, patterns, concepts, rules, and usage validation from the central package", async () => {
     const { root } = await createAssetPackageFixture();
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
 
-    const assets = await callVibeFoundryTool(root, "list_assets");
-    const component = await callVibeFoundryTool(root, "get_component", {
+    const assets = await callVibeHubTool(root, "list_assets");
+    const component = await callVibeHubTool(root, "get_component", {
       name: "Button",
     });
-    const service = await callVibeFoundryTool(root, "get_service", {
+    const service = await callVibeHubTool(root, "get_service", {
       name: "auth.register",
     });
-    const tokens = await callVibeFoundryTool(root, "search_tokens", {
+    const tokens = await callVibeHubTool(root, "search_tokens", {
       query: "rounded",
     });
-    const businessPatterns = await callVibeFoundryTool(
+    const businessPatterns = await callVibeHubTool(
       root,
       "search_business_patterns",
       { query: "auth" },
     );
-    const concepts = await callVibeFoundryTool(root, "search_concept_assets", {
+    const concepts = await callVibeHubTool(root, "search_concept_assets", {
       query: "empty",
     });
-    const rules = await callVibeFoundryTool(root, "get_agent_rules");
-    const validation = await callVibeFoundryTool(root, "validate_asset_usage", {
+    const rules = await callVibeHubTool(root, "get_agent_rules");
+    const validation = await callVibeHubTool(root, "validate_asset_usage", {
       kind: "service",
       name: "auth.register",
     });
@@ -277,7 +288,7 @@ describe("VibeFoundry MCP readonly server", () => {
     assert.equal(tokens.structuredContent.tokens[0].name, "rounded-lg");
     assert.equal(businessPatterns.structuredContent.businessPatterns[0].name, "auth flow");
     assert.equal(concepts.structuredContent.conceptAssets[0].name, "activation empty state");
-    assert.match(rules.structuredContent.markdown, /VibeFoundry Agent Rules/);
+    assert.match(rules.structuredContent.markdown, /VibeHub Agent Rules/);
     assert.equal(validation.structuredContent.exists, true);
     assert.match(validation.structuredContent.guidance[0], /auth\.register/);
   });
@@ -285,88 +296,88 @@ describe("VibeFoundry MCP readonly server", () => {
   it("reads component prompts by exact filePath even when names are identical", async () => {
     const { root, assetDir } = await createAssetPackageFixture();
     const { writeComponentPrompts } = await import("../../dist/library/component-prompts.js");
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
     const components = [{ name: "Button", filePath: "src/components/Button.tsx" }, { name: "Button", filePath: "src/admin/Button.tsx" }];
     await writeJson(join(assetDir, "component-catalog.json"), { components });
     const records = components.map((component, index) => ({ schemaVersion: "0.2.0", componentName: component.name, filePath: component.filePath, sourceDigest: String(index + 1).repeat(64), sourceFiles: [component.filePath], unresolved: [], prompt: index === 0 ? "横向布局，使用细描边。" : "纵向布局，使用圆角。" }));
     await writeComponentPrompts(assetDir, records);
-    const result = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/admin/Button.tsx" });
+    const result = await callVibeHubTool(root, "get_component_prompt", { filePath: "src/admin/Button.tsx" });
     assert.equal(result.isError, false);
     assert.deepEqual(result.structuredContent, records[1]);
-    const normalized = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src\\admin\\Button.tsx" });
+    const normalized = await callVibeHubTool(root, "get_component_prompt", { filePath: "src\\admin\\Button.tsx" });
     assert.deepEqual(normalized.structuredContent, records[1]);
   });
 
   it("does not invent prompts for missing arguments, paths, ambiguous catalogs or old packages", async () => {
     const { root, assetDir } = await createAssetPackageFixture();
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
     for (const args of [{}, { filePath: "src/unknown.tsx" }]) {
-      const result = await callVibeFoundryTool(root, "get_component_prompt", args);
+      const result = await callVibeHubTool(root, "get_component_prompt", args);
       assert.equal(result.isError, true);
       assert.match(result.structuredContent.message, /filePath.*required|not found/i);
     }
-    const legacy = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/components/Button.tsx" });
+    const legacy = await callVibeHubTool(root, "get_component_prompt", { filePath: "src/components/Button.tsx" });
     assert.equal(legacy.isError, true);
     assert.match(legacy.structuredContent.message, /distill/);
-    assert.equal((await callVibeFoundryTool(root, "get_component", { name: "Button" })).isError, false);
+    assert.equal((await callVibeHubTool(root, "get_component", { name: "Button" })).isError, false);
     await writeJson(join(assetDir, "component-catalog.json"), { components: [{ name: "A", filePath: "src/Button.tsx" }, { name: "B", filePath: "src/Button.tsx" }] });
-    const ambiguous = await callVibeFoundryTool(root, "get_component_prompt", { filePath: "src/Button.tsx" });
+    const ambiguous = await callVibeHubTool(root, "get_component_prompt", { filePath: "src/Button.tsx" });
     assert.equal(ambiguous.isError, true);
     assert.match(ambiguous.structuredContent.message, /ambiguous/i);
   });
 
   it("rejects old source prompts while keeping other asset tools available", async () => {
     const { root, assetDir } = await createAssetPackageFixture();
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
     const filePath = "src/components/Button.tsx";
     const directory = join(assetDir, "component-prompts");
     await mkdir(directory);
     await writeJson(join(directory, createHash("sha256").update(filePath).digest("hex") + ".json"), {
       schemaVersion: "0.1.0", componentName: "Button", filePath, sourceDigest: "a".repeat(64), sourceFiles: [filePath], unresolved: [], prompt: "export function Button() {}",
     });
-    const result = await callVibeFoundryTool(root, "get_component_prompt", { filePath });
+    const result = await callVibeHubTool(root, "get_component_prompt", { filePath });
     assert.equal(result.isError, true);
     assert.match(result.structuredContent.message, /提示词格式已更新，请重新炼化/);
     assert.doesNotMatch(JSON.stringify(result), /export function/);
-    assert.equal((await callVibeFoundryTool(root, "get_component", { name: "Button" })).isError, false);
+    assert.equal((await callVibeHubTool(root, "get_component", { name: "Button" })).isError, false);
   });
 
   it("returns a clear error when the asset package is missing", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vibe-foundry-mcp-missing-"));
-    const libraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-mcp-library-missing-"));
+    const root = await mkdtemp(join(tmpdir(), "vibehub-mcp-missing-"));
+    const libraryRoot = await mkdtemp(join(tmpdir(), "vibehub-mcp-library-missing-"));
     fixtureRoots.push(root, libraryRoot);
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = libraryRoot;
-    const { callVibeFoundryTool } = await loadServer();
+    process.env.VIBEHUB_LIBRARY_ROOT = libraryRoot;
+    const { callVibeHubTool } = await loadServer();
 
-    const result = await callVibeFoundryTool(root, "list_assets");
+    const result = await callVibeHubTool(root, "list_assets");
 
     assert.equal(result.isError, true);
     assert.match(result.structuredContent.message, /centralized asset package/i);
-    assert.match(result.structuredContent.message, /vibe-foundry distill \./);
+    assert.match(result.structuredContent.message, /vibe distill \./);
   });
 
   it("ignores a stale source-local package when a newer central package exists", async () => {
     const { root, assetDir } = await createAssetPackageFixture();
-    const staleDir = join(root, ".vibe-foundry");
+    const staleDir = join(root, ".vibehub");
     await cp(assetDir, staleDir, { recursive: true });
     const staleManifest = JSON.parse(await readFile(join(staleDir, "asset-manifest.json"), "utf8"));
     staleManifest.generatedAt = "2025-01-01T00:00:00.000Z";
     await writeJson(join(staleDir, "asset-manifest.json"), staleManifest);
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
 
-    const result = await callVibeFoundryTool(root, "list_assets");
+    const result = await callVibeHubTool(root, "list_assets");
 
     assert.equal(result.structuredContent.manifest.generatedAt, "2026-07-08T00:00:00.000Z");
   });
 
   it("prefers an explicit assetLibraryRoot over the environment", async () => {
     const { root, libraryRoot } = await createAssetPackageFixture();
-    const wrongLibraryRoot = await mkdtemp(join(tmpdir(), "vibe-foundry-mcp-wrong-library-"));
+    const wrongLibraryRoot = await mkdtemp(join(tmpdir(), "vibehub-mcp-wrong-library-"));
     fixtureRoots.push(wrongLibraryRoot);
-    process.env.VIBE_FOUNDRY_LIBRARY_ROOT = wrongLibraryRoot;
-    const { callVibeFoundryTool } = await loadServer();
+    process.env.VIBEHUB_LIBRARY_ROOT = wrongLibraryRoot;
+    const { callVibeHubTool } = await loadServer();
 
-    const result = await callVibeFoundryTool(
+    const result = await callVibeHubTool(
       root,
       "list_assets",
       {},
@@ -381,10 +392,10 @@ describe("VibeFoundry MCP readonly server", () => {
     const sourceFile = join(root, "src", "source.ts");
     const beforeContent = await readFile(sourceFile, "utf8");
     const beforeStat = await stat(sourceFile);
-    const { callVibeFoundryTool } = await loadServer();
+    const { callVibeHubTool } = await loadServer();
 
-    await callVibeFoundryTool(root, "list_assets");
-    await callVibeFoundryTool(root, "validate_asset_usage", {
+    await callVibeHubTool(root, "list_assets");
+    await callVibeHubTool(root, "validate_asset_usage", {
       kind: "component",
       name: "Button",
     });
@@ -397,29 +408,23 @@ describe("VibeFoundry MCP readonly server", () => {
 
   it("documents local MCP usage, readonly scope, and verification steps", async () => {
     const runbook = await readFile(
-      "docs/runbooks/use-vibe-foundry-mcp.md",
-      "utf8",
-    );
-    const masterPlan = await readFile(
-      "docs/plans/2026-07-08-vibe-foundry-master-implementation.md",
+      "docs/runbooks/use-vibehub-mcp.md",
       "utf8",
     );
 
-    assert.match(runbook, /# 使用 VibeFoundry MCP/);
+    assert.match(runbook, /# 使用 VibeHub MCP/);
     assert.match(runbook, /src\/mcp\/server\.ts/);
     assert.match(runbook, /list_assets/);
     assert.match(runbook, /validate_asset_usage/);
     assert.match(runbook, /只读/);
     assert.match(runbook, /只读取集中资产库中的项目资产包/);
     assert.match(runbook, /不提供回退/);
-    assert.doesNotMatch(runbook, /只读取 `\.vibe-foundry/);
+    assert.doesNotMatch(runbook, /只读取 `\.vibehub/);
     assert.match(runbook, /npm test/);
     assert.match(runbook, /npm run build/);
     assert.match(runbook, /2025-06-18/);
     assert.match(runbook, /换行分隔/);
     assert.doesNotMatch(runbook, /Content-Length/);
-    assert.match(masterPlan, /2025-06-18/);
-    assert.match(masterPlan, /换行分隔/);
   });
 
   it("handles MCP JSON-RPC tools/list and tools/call requests", async () => {
@@ -442,7 +447,7 @@ describe("VibeFoundry MCP readonly server", () => {
     });
 
     assert.equal(toolsResponse.jsonrpc, "2.0");
-    assert.equal(toolsResponse.result.tools.length, 9);
+    assert.equal(toolsResponse.result.tools.length, 20);
     assert.equal(callResponse.result.structuredContent.component.name, "Button");
   });
 
@@ -458,7 +463,7 @@ describe("VibeFoundry MCP readonly server", () => {
         params: {
           protocolVersion: "2025-06-18",
           capabilities: {},
-          clientInfo: { name: "vibe-foundry-test", version: "1.0.0" },
+          clientInfo: { name: "vibehub-test", version: "1.0.0" },
         },
       });
       const initialized = await server.receive();
@@ -471,7 +476,7 @@ describe("VibeFoundry MCP readonly server", () => {
       );
       const tools = await server.receive();
       assert.equal(tools.id, 2, "notifications/initialized must not produce a response");
-      assert.equal(tools.result.tools.length, 9);
+      assert.equal(tools.result.tools.length, 20);
 
       server.send({
         jsonrpc: "2.0",

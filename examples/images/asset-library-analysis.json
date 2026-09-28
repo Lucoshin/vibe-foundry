@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.1.0",
+  "sourceDigest": "9b6cdbc76dba9fe4791031d9e619712f646be3072fbeb944ebd73f754f8da251",
+  "title": "历史资产库设计图的视觉结构",
+  "description": "对仓库自有历史设计图的视觉分析；用于验证图片知识流程，不作为现行导航、品牌或功能要求。",
+  "observations": [
+    {"aspect":"composition","text":"画面分为左侧窄导航、中部资产列表和右侧详情三列；主内容顶部有标题与搜索框。","evidence":{"scope":"whole-image"}},
+    {"aspect":"color","text":"背景为浅灰白色，内容面板为白色，正文使用深灰，次要说明使用中灰；左侧选中导航呈浅蓝底与蓝色文字。","evidence":{"scope":"whole-image"}},
+    {"aspect":"composition","text":"右侧白色详情面板包含标题、类型、来源与复用说明，字段之间留有明显的纵向空白。","evidence":{"scope":"region","x":856,"y":132,"width":360,"height":648}},
+    {"aspect":"subject","text":"中部白色面板显示三个条目，每项以较深的名称和较浅的描述分层排列。","evidence":{"scope":"region","x":280,"y":132,"width":540,"height":648}}
+  ],
+  "inferences": [
+    {"text":"三列布局可能用于同时查找资产和核对其复用信息。","basedOn":[0,2,3],"uncertainty":"用途依据画面结构推断；单张设计图无法证明真实交互、可用性或实现状态。"}
+  ],
+  "prompts": [
+    {"targetModel":"generic","prompt":"设计一个横向桌面知识资产浏览界面：左侧为窄导航，中间为资产条目列表，右侧为选中资产的详情。使用浅灰白背景、白色圆角内容面板、深灰正文与灰色辅助说明，蓝色仅突出当前导航。主区域顶部放标题和搜索框，条目采用名称与说明两级文字，详情按类型、来源、使用说明分组，保持充足留白。文字与品牌依据实际产品替换。","verification":"unverified"}
+  ],
+  "tags": ["界面设计", "三列布局", "历史样本"]
+}

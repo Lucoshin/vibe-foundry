@@ -1,7 +1,6 @@
 import { mkdir, readdir, realpath, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { writeComponentPreviewRuntime } from "../preview/component-preview-runtime.js";
 import { openPreviewBuildCache } from "../preview/preview-build-cache.js";
 import { slugifyMetaphorSource } from "../schema/metaphor-pack.js";
 import { writeComponentPrompts } from "../library/component-prompts.js";
@@ -67,7 +66,7 @@ export async function validateMetaphorOutput(outputDir, metaphorPacks) {
   return metaphorFiles;
 }
 
-export async function writeAssetPackage(projectRoot, assetPackage, options = {}) {
+export async function writeAssetPackage(assetPackage, options = {}) {
   if (!options.outputDir) {
     throw new Error("writeAssetPackage requires options.outputDir");
   }
@@ -101,6 +100,9 @@ export async function writeAssetPackage(projectRoot, assetPackage, options = {})
     stableJson({
       schemaVersion: assetPackage.schemaVersion,
       components: assetPackage.components,
+      ...(assetPackage.componentSelection ? {selectionDecisions:assetPackage.componentSelection} : {}),
+      pages: assetPackage.pages ?? [],
+      ...(options.componentRecipe ? {recipe: options.componentRecipe} : {}),
     }),
   );
 
@@ -114,10 +116,6 @@ export async function writeAssetPackage(projectRoot, assetPackage, options = {})
     join(outputDir, "component-previews.json"),
     stableJson(componentPreviewRegistry),
   );
-  await writeComponentPreviewRuntime(projectRoot, componentPreviewRegistry, {
-    previewRoot: join(outputDir, "preview-runtime"),
-    sourceIndex: options.sourceIndex,
-  });
 
   await writeFile(
     join(outputDir, "service-catalog.json"),

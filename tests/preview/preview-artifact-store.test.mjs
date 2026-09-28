@@ -20,10 +20,10 @@ describe("preview artifact store", () => {
   });
 
   it("commits a deterministic immutable tree and materializes it", async () => {
-    const sourceA = await tempRoot("vibe-foundry-artifact-a-");
-    const sourceB = await tempRoot("vibe-foundry-artifact-b-");
-    const storeRoot = await tempRoot("vibe-foundry-cas-");
-    const output = await tempRoot("vibe-foundry-materialized-");
+    const sourceA = await tempRoot("vibehub-artifact-a-");
+    const sourceB = await tempRoot("vibehub-artifact-b-");
+    const storeRoot = await tempRoot("vibehub-cas-");
+    const output = await tempRoot("vibehub-materialized-");
     await mkdir(join(sourceA, "assets"), { recursive: true });
     await writeFile(join(sourceA, "index.html"), "<title>Preview</title>\n");
     await writeFile(join(sourceA, "assets", "app.js"), "console.log('preview')\n");
@@ -44,9 +44,9 @@ describe("preview artifact store", () => {
   });
 
   it("rejects symbolic links instead of following files outside the build root", async () => {
-    const source = await tempRoot("vibe-foundry-artifact-link-");
-    const outside = await tempRoot("vibe-foundry-artifact-outside-");
-    const storeRoot = await tempRoot("vibe-foundry-cas-");
+    const source = await tempRoot("vibehub-artifact-link-");
+    const outside = await tempRoot("vibehub-artifact-outside-");
+    const storeRoot = await tempRoot("vibehub-cas-");
     await writeFile(join(outside, "secret.txt"), "secret");
     await symlink(
       process.platform === "win32" ? outside : join(outside, "secret.txt"),
@@ -59,8 +59,8 @@ describe("preview artifact store", () => {
   });
 
   it("detects a mutated CAS blob before serving it", async () => {
-    const source = await tempRoot("vibe-foundry-artifact-corrupt-");
-    const storeRoot = await tempRoot("vibe-foundry-cas-");
+    const source = await tempRoot("vibehub-artifact-corrupt-");
+    const storeRoot = await tempRoot("vibehub-cas-");
     await writeFile(join(source, "index.html"), "trusted preview");
     const store = openPreviewArtifactStore(storeRoot);
     const result = await store.commitDirectory(source);
@@ -79,7 +79,7 @@ describe("preview artifact store", () => {
   });
 
   it("rejects unsafe relative paths when reading a tree", async () => {
-    const storeRoot = await tempRoot("vibe-foundry-cas-");
+    const storeRoot = await tempRoot("vibehub-cas-");
     const store = openPreviewArtifactStore(storeRoot);
 
     await assert.rejects(

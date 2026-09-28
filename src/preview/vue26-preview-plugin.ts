@@ -1,10 +1,46 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parse, compileTemplate, compileStyle } from '@vue/component-compiler-utils';
 import { preprocessCSS, transformWithEsbuild } from 'vite';
+import { parse as parseScript } from '@babel/parser';
 import { assertPreviewDependencies } from './preview-dependencies.js';
+
+export function resolveVue26Path(projectRoot) {
+  const fromProject=createRequire(join(projectRoot,'package.json'));
+  try {
+    const webpackPackage=fromProject.resolve('webpack/package.json');
+    if(!/^4\./.test(fromProject(webpackPackage).version)) return null;
+    const fromWebpack=createRequire(webpackPackage);
+    const mappedPath=fromWebpack('node-libs-browser').path;
+    if(typeof mappedPath!=='string' || !isAbsolute(mappedPath)) return null;
+    return fromWebpack.resolve(mappedPath);
+  } catch(error) {
+    if(error.code==='MODULE_NOT_FOUND') return null;
+    throw error;
+  }
+}
+
+export async function transformVue26Script(source, filename, lang, fromProject) {
+  if (lang && !['js', 'jsx', 'ts'].includes(lang)) throw new Error('暂未适配 Vue 2.6 脚本语言：'+lang);
+  if (lang === 'ts') return (await transformWithEsbuild(source,filename+'.ts',{loader:'ts'})).code;
+  const ast = parseScript(source, {sourceType:'module',plugins:['jsx']});
+  function containsJsx(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (node.type === 'JSXElement' || node.type === 'JSXFragment') return true;
+    return Object.values(node).some(child => Array.isArray(child) ? child.some(containsJsx) : child?.type && containsJsx(child));
+  }
+  if (!containsJsx(ast)) return source;
+  // Vue CLI's Vue 2 branch uses this exact preset. Keep ESM and avoid executing
+  // the source Babel config (whose development branch rewrites import()).
+  const babel = fromProject('@babel/core');
+  const preset = fromProject('@vue/babel-preset-jsx');
+  const output = await babel.transformAsync(source, {
+    filename, babelrc:false, configFile:false, sourceType:'module', presets:[preset],
+  });
+  return output.code;
+}
 
 // Only the static Vue 2.6 SFC transform lives here. Vite owns CSS/assets and bundling.
 export function vue26PreviewPlugin(projectRoot) {
@@ -25,15 +61,17 @@ export function vue26PreviewPlugin(projectRoot) {
     name:'vibe-vue26-sfc',
     enforce:'pre',
     configResolved(value) { config=value; },
-    resolveId(id) { if (id.includes('?vibe-vue26=')) return id; },
+    resolveId(id) {
+      if (id.includes('?vibe-vue26=')) return id;
+      if (id==='path') return resolveVue26Path(projectRoot);
+    },
     async load(id) {
       const {filename,query}=parts(id);
       if (!query.has('vibe-vue26')) return null;
       const sfc=descriptors.get(filename);
       if (query.get('vibe-vue26')==='script') {
         const script=sfc.script;
-        if (script.lang && !['js','ts'].includes(script.lang)) throw new Error('暂未适配 Vue 2.6 脚本语言：'+script.lang);
-        return script.lang==='ts' ? (await transformWithEsbuild(script.content,filename+'.ts',{loader:'ts'})).code : script.content;
+        return transformVue26Script(script.content,filename,script.lang,fromProject);
       }
       const style=sfc.styles[Number(query.get('index'))];
       if (style.module) throw new Error('Vue 2.6 CSS Modules 尚未适配：'+filename);

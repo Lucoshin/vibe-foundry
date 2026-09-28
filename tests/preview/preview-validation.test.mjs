@@ -13,14 +13,14 @@ describe("preview validation protocol", () => {
       component: "button-ab12cd",
       actionDigest: "a".repeat(64),
     }), {
-      protocolVersion: 1,
+      protocolVersion: 2,
       source: "browser-mount",
       component: "button-ab12cd",
       actionDigest: "a".repeat(64),
       assertions: [
         "served-current-action",
         "component-mounted",
-        "non-empty-preview-canvas",
+        "visible-component-content",
       ],
     });
   });
