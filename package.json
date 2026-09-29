@@ -26,7 +26,7 @@
   "dependencies": {
     "@babel/parser": "^8.0.6",
     "@vibehub/vue2-preview-toolchain": "file:packages/vue2-preview-toolchain",
-    "@vitejs/plugin-vue": "5.2.4",
+    "@vitejs/plugin-vue": "6.0.9",
     "@vue/compiler-dom": "^3.5.43",
     "@vue/compiler-sfc": "^3.5.43",
     "@vue/component-compiler-utils": "3.3.0",
