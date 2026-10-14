@@ -31,7 +31,7 @@
     "@vue/compiler-sfc": "^3.5.43",
     "@vue/component-compiler-utils": "3.3.0",
     "better-sqlite3": "13.0.3",
-    "postcss": "8.5.28",
+    "postcss": "8.5.29",
     "sass-embedded": "1.104.1",
     "vite": "5.4.21"
   },
